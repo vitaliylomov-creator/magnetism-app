@@ -42,8 +42,59 @@
     padding:22px 40px; border-bottom:0.5px solid var(--border);
   }
   .brand{ font-size:12px; letter-spacing:0.22em; text-transform:uppercase; color: var(--t3); }
-  .signout{ font-size:12px; color: var(--t3); cursor:pointer; background:none; border:none; font-family:var(--font-b); }
-  .signout:hover{ color: var(--ink); }
+  .header-actions{ display:flex; align-items:center; gap:24px; }
+  .header-btn{
+    font-size:12px; color: var(--t3); cursor:pointer;
+    background:none; border:none; font-family:var(--font-b); padding:0;
+    transition: color 0.2s;
+  }
+  .header-btn:hover{ color: var(--ink); }
+  .header-btn.danger:hover{ color: var(--error, #B3432E); }
+
+  /* ---------- CLEAR MEMORY MODAL ---------- */
+  .modal-backdrop{
+    position:fixed; inset:0; background: rgba(36,34,30,0.55);
+    display:none; align-items:center; justify-content:center; z-index:100;
+    padding: 24px;
+  }
+  .modal-backdrop.visible{ display:flex; }
+  .modal{
+    background: var(--paper); border-radius:16px; padding:40px 40px 32px;
+    max-width: 460px; width: 100%;
+    border:0.5px solid var(--border);
+  }
+  .modal h2{
+    font-family: var(--font-d); font-weight:400; font-size:24px;
+    letter-spacing:-0.01em; margin-bottom:14px;
+  }
+  .modal p{
+    font-size:14.5px; color: var(--t2); line-height:1.65; margin-bottom:20px;
+  }
+  .modal input.confirm-input{
+    width:100%; font-family: var(--font-b); font-size:14px;
+    background: transparent; color: var(--ink);
+    border: 0.5px solid var(--border-mid); border-radius:10px;
+    padding:12px 14px; outline:none; margin-bottom:22px;
+    transition: border-color 0.2s;
+  }
+  .modal input.confirm-input:focus{ border-color: var(--gold); }
+  .modal-actions{ display:flex; gap:12px; justify-content:flex-end; }
+  .modal-actions button{
+    font-family: var(--font-b); font-size:13px; font-weight:500;
+    padding:11px 22px; border-radius:100px; cursor:pointer;
+    transition: background 0.2s, opacity 0.2s;
+  }
+  .modal-actions .cancel{
+    background: transparent; color: var(--t1);
+    border: 0.5px solid var(--border-strong);
+  }
+  .modal-actions .cancel:hover{ background: rgba(36,34,30,0.05); }
+  .modal-actions .delete{
+    background: var(--error, #B3432E); color: var(--paper);
+    border: none;
+  }
+  .modal-actions .delete:hover{ opacity: 0.88; }
+  .modal-actions .delete:disabled{ opacity: 0.35; cursor: default; }
 
   main{
     flex:1;
@@ -212,8 +263,23 @@
 
 <header>
   <div class="brand">Talent Mates · Magnetism</div>
-  <button class="signout" id="signoutBtn">Sign out</button>
+  <div class="header-actions">
+    <button class="header-btn danger" id="clearMemoryBtn">Clear memory</button>
+    <button class="header-btn" id="signoutBtn">Sign out</button>
+  </div>
 </header>
+
+<div class="modal-backdrop" id="clearMemoryModal">
+  <div class="modal" role="dialog" aria-labelledby="clearModalTitle">
+    <h2 id="clearModalTitle">Clear everything?</h2>
+    <p>This deletes every entry you have written and everything Magnetism remembers about you. It is not recoverable. Type <strong>CLEAR</strong> below to confirm.</p>
+    <input type="text" class="confirm-input" id="clearConfirmInput" placeholder="Type CLEAR" autocomplete="off" />
+    <div class="modal-actions">
+      <button class="cancel" id="clearCancelBtn">Cancel</button>
+      <button class="delete" id="clearConfirmBtn" disabled>Delete everything</button>
+    </div>
+  </div>
+</div>
 
 <main>
   <aside class="spine">
@@ -406,6 +472,59 @@
   document.getElementById("signoutBtn").addEventListener("click", async () => {
     await sb.auth.signOut();
     window.location.href = "magnetism-auth.html";
+  });
+
+  // ---- clear memory ----
+  const clearModal = document.getElementById("clearMemoryModal");
+  const clearConfirmInput = document.getElementById("clearConfirmInput");
+  const clearConfirmBtn = document.getElementById("clearConfirmBtn");
+  const clearCancelBtn = document.getElementById("clearCancelBtn");
+  const clearMemoryBtn = document.getElementById("clearMemoryBtn");
+
+  function openClearModal() {
+    clearConfirmInput.value = "";
+    clearConfirmBtn.disabled = true;
+    clearModal.classList.add("visible");
+    // Delay focus by a tick so the modal transition doesn't steal it.
+    setTimeout(() => clearConfirmInput.focus(), 20);
+  }
+  function closeClearModal() {
+    clearModal.classList.remove("visible");
+  }
+
+  clearMemoryBtn.addEventListener("click", openClearModal);
+  clearCancelBtn.addEventListener("click", closeClearModal);
+  clearModal.addEventListener("click", (e) => {
+    // Close on backdrop click, not on inner modal click.
+    if (e.target === clearModal) closeClearModal();
+  });
+
+  clearConfirmInput.addEventListener("input", () => {
+    clearConfirmBtn.disabled = clearConfirmInput.value.trim() !== "CLEAR";
+  });
+
+  clearConfirmBtn.addEventListener("click", async () => {
+    if (!session) return;
+    clearConfirmBtn.disabled = true;
+    clearConfirmBtn.textContent = "Deleting...";
+
+    // RLS lets the signed-in user delete their own rows in both tables
+    // (see migration 0004_memory.sql). safety_incidents is intentionally
+    // left untouched, it exists for consultant audit.
+    const uid = session.user.id;
+    const del1 = await sb.from("conversations").delete().eq("user_id", uid);
+    const del2 = await sb.from("memory_profiles").delete().eq("user_id", uid);
+
+    if (del1.error || del2.error) {
+      clearConfirmBtn.textContent = "Delete everything";
+      clearConfirmBtn.disabled = false;
+      alert("Something went wrong. Please try again.");
+      return;
+    }
+
+    // Reload the dashboard so the spine, reply state, and everything else
+    // reflect the freshly-empty account.
+    window.location.reload();
   });
 
   // ---- spine ----

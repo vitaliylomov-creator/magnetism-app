@@ -14,3 +14,8 @@ project_id = "magnetism-app"
 # against SUPABASE_SERVICE_ROLE_KEY inside the function.
 [functions.magnetism-corpus-seed]
 verify_jwt = false
+
+# magnetism-memory-refresh is called either by cron (via pg_net) or by
+# ops/admin from CLI. Same admin-only pattern as corpus-seed.
+[functions.magnetism-memory-refresh]
+verify_jwt = false
