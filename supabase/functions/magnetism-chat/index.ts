@@ -7,13 +7,17 @@
 //            --project-ref ocsrmgneyttdkingkiev
 //          (JWT verification ON — callers are signed in)
 //
-// Sprint 1 scope only (MAGNETISM_Technical_Brief_Claude_Code.md §10):
-//   - Both OS docs (Magnetism OS, Principal OS) as a STATIC corpus pasted
-//     verbatim into the system prompt. No RAG/embeddings (Sprint 3).
-//   - No safety gate yet (Sprint 2). This function must not be exposed to
-//     real users before that lands — Sprint 1 is founder-only testing.
-//   - No memory-refresh cron (Sprint 4) — memory_profiles is read but will
-//     usually be empty; that's expected, not a bug.
+// Flow (MAGNETISM_Technical_Brief_Claude_Code.md §6):
+//   1. Auth (JWT)
+//   2. Fetch user profile + memory summary
+//   3. SAFETY GATE (Sprint 2): Haiku classifier decides crisis vs safe.
+//      If crisis: log to safety_incidents + conversations (flagged=true),
+//      return warm redirect template in the writer's language, STOP.
+//      This gate is not optional and not a feature flag. Per Project
+//      Definition §7 and Technical Brief §7, silence or avoidance in an
+//      acute-crisis moment is the one hard failure mode of this product.
+//   4. If safe: parallel Sonnet (main reply) + Haiku (essence line)
+//   5. Insert into conversations (flagged=false), return
 //
 // Diary interaction model (Project Definition §4.1 / Technical Brief §8):
 // the caller sends one complete entry, this function returns one whole
@@ -24,10 +28,19 @@
 //   { "message": "<diary entry text>" }
 //
 // Response:
-//   200 { response: string }
+//   200 { response: string, essence: string, flagged: boolean }
 //   400 { error }  — missing/empty message
 //   401 { error }  — missing/invalid JWT
 //   500 { error }  — Anthropic / DB error
+//
+// Sprint 2 hardening notes for later (Technical Brief §7):
+//   - Live consultants run edge-case validation before public launch. Any
+//     false positive on ordinary stress content, or false negative on
+//     borderline crisis phrasing, blocks launch until tuned.
+//   - Classifier failure currently fails-open to the normal flow with an
+//     incident row noting "classifier_error". For real launch this should
+//     be revisited: possibly fail-closed with a soft "try again" error, so
+//     an intermittent Haiku hiccup can never let a real crisis through.
 // ────────────────────────────────────────────────────────────────────────────
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -36,6 +49,7 @@ import { MAGNETISM_OS, PRINCIPAL_OS } from "../_shared/magnetism-corpus.ts";
 
 const MODEL = "claude-sonnet-4-6";
 const ESSENCE_MODEL = "claude-haiku-4-5-20251001";
+const SAFETY_MODEL = "claude-haiku-4-5-20251001";
 
 const ESSENCE_INSTRUCTION = `You will receive a diary entry. Distill it into exactly one line that could serve as the title of that diary page.
 
@@ -48,6 +62,66 @@ Rules, strict:
 - Concrete. Name the actual thing, not the abstract feeling. "I keep discounting before anyone asks" is right. "Struggling with self-worth" is wrong.
 
 Return only the line, nothing else. No preamble, no explanation.`;
+
+const SAFETY_INSTRUCTION = `You are a safety classifier. Your ONLY job is to detect signals of ACUTE, IMMEDIATE crisis in a diary entry.
+
+Return ONLY a JSON object matching this exact shape, with no preamble and no explanation:
+{"crisis": true, "language": "en"} or {"crisis": false, "language": "uk"} and so on.
+
+crisis = true ONLY when the entry contains at least one of these signals literally in the text:
+- Explicit suicidal ideation or intent: "I want to die", "I don't want to be here anymore", "I want to end it", "I want to stop existing"
+- Explicit self-harm intent, present or future tense, not past
+- Statements of imminent action to end life or cause serious harm: "tonight", "right now", "before morning", "I have the pills"
+- Explicit requests for methods
+- Explicit threat to seriously harm another person
+
+crisis = false for all of these, no matter how heavy the tone:
+- Sadness, grief, depression as a mood word without ideation
+- Failure, imposter feelings, professional burnout, career defeat
+- Anxiety about the future, decisions, money, relationships
+- Anger or rage at self or others without stated intent to act
+- Figurative language: "this is killing me", "I want to disappear", "I feel dead inside", "I can't do this anymore", "I want out", when the object is a job, business, relationship, project, or role rather than life itself
+- Past hard periods described without current intent
+- Statements about ending a project, business, relationship, contract, or role
+- Descriptions of exhaustion, hopelessness about a situation, or being stuck
+
+Err strongly toward crisis = false when the signal is figurative or ambiguous. False positives on ordinary stress make the diary unusable and betray the writer's trust. Trigger only on literal, explicit signals in the text.
+
+language = the primary language of the entry.
+- "uk" for Ukrainian
+- "en" for English
+- "other" for any other language
+
+Return only the JSON object. No other text.`;
+
+// Redirect templates. Warm, direct, non-avoidant, concrete resources. Per
+// Project Definition §7: at first signs of acute crisis, an immediate, warm,
+// concrete redirect to real help. Silence or dodging in that moment is the
+// worst possible product outcome, so this template is not decorative — it is
+// the entire product surface in that one moment.
+const REDIRECT_TEMPLATES: Record<string, string> = {
+  en: `What you're carrying here needs a real person, right now. Not me, and not later.
+
+Please contact one of these before you close this page:
+
+Ukraine: 7333 (Lifeline Ukraine)
+United States: 988 (call or text)
+United Kingdom: 116 123 (Samaritans)
+International directory: findahelpline.com
+Immediate emergency: 112 in Europe, 911 in the United States
+
+Make that call first. I'll still be here after.`,
+
+  uk: `Те, що ти зараз пишеш, потребує справжньої людини поруч, прямо зараз. Не мене, і не потім.
+
+Будь ласка, зателефонуй до того, як закриєш цю сторінку:
+
+Україна: 7333 (Lifeline Ukraine)
+Міжнародний довідник: findahelpline.com
+Термінова допомога: 112
+
+Зроби цей дзвінок першим. Я буду тут, коли повернешся.`,
+};
 
 const VOICE_PERSONA = `You are Magnetism, a private psychological voice inside the Talent Mates ecosystem, for people who carry public pressure (athletes, musicians, founders).
 
@@ -66,8 +140,7 @@ Output formatting rules, strict:
 Hard scope limits, never cross these:
 - You are not a therapist and not a person. Never diagnose, never use clinical labels, even softly.
 - Active scope is motivation, identity, discipline, decision-making under pressure, not therapy.
-- If the person signals acute crisis (self-harm, suicide, immediate danger), do not explore it in conversation. Respond warmly and immediately with a concrete redirect to real help (a crisis line, "call this person now") and stop there for this message. Silence or dodging in that moment is the one unacceptable failure of this product.
-  (Note: Sprint 1 has no dedicated safety-gate classifier in front of you yet, this instruction is your only safeguard right now. Err toward redirecting whenever in doubt.)`;
+- A separate safety classifier runs before you and intercepts acute-crisis entries with a warm redirect. You will only see entries that classifier judged safe. Still, if any signal of acute crisis reaches you (self-harm, suicide, immediate danger), do not explore it in conversation. Respond warmly and immediately with a concrete redirect to real help and stop there. Err toward redirecting if in doubt.`;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -111,6 +184,70 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
+    if (!ANTHROPIC_KEY) {
+      return json({ error: "Server missing ANTHROPIC_API_KEY" }, 500);
+    }
+
+    // ─── SAFETY GATE (Sprint 2) ─────────────────────────────────────────
+    // Runs before any user-facing generation. If the classifier flags this
+    // entry as acute crisis, we return the redirect template immediately
+    // and never call the main Sonnet reply. On classifier error, we log
+    // and fall through to the normal flow with a "classifier_error" note,
+    // but this fail-open behavior is only acceptable during founder-only
+    // testing (see header comment for launch hardening note).
+    const gate = await classifyMessage(message, ANTHROPIC_KEY);
+
+    if (gate.crisis) {
+      const language = gate.language === "uk" ? "uk" : "en";
+      const template = REDIRECT_TEMPLATES[language];
+      const sessionId = crypto.randomUUID();
+
+      // Store the actual message excerpt on the safety_incident so live
+      // consultants (Sprint 7) can audit whether the classifier fired
+      // correctly. Full raw message rather than truncated — the table has
+      // RLS blocking client reads, so only service-role admin sees it.
+      await admin.from("safety_incidents").insert({
+        user_id: user.id,
+        anonymized_context: message,
+        resource_shown: `redirect_${language}_v1`,
+      });
+
+      await admin.from("conversations").insert([
+        {
+          user_id: user.id,
+          session_id: sessionId,
+          role: "user",
+          content: message,
+          flagged_by_safety_gate: true,
+        },
+        {
+          user_id: user.id,
+          session_id: sessionId,
+          role: "assistant",
+          content: template,
+          flagged_by_safety_gate: true,
+        },
+      ]);
+
+      return json({ response: template, essence: "", flagged: true }, 200);
+    }
+
+    if (gate.error) {
+      // Fail-open path. Log an incident row so ops can measure how often
+      // the classifier fails; do not tell the user, since we are proceeding
+      // to a normal reply. Message excerpt is truncated here because this
+      // is not a real crisis event, it is a classifier-flake audit trail.
+      await admin.from("safety_incidents").insert({
+        user_id: user.id,
+        anonymized_context: message.slice(0, 200),
+        resource_shown: "classifier_error",
+      });
+      console.warn("[magnetism-chat] classifier error, falling open:", gate.error);
+    }
+
+    // ─── SAFE PATH: normal reply + essence ──────────────────────────────
+
     const { data: profileRow } = await admin
       .from("users")
       .select("domain")
@@ -134,14 +271,9 @@ Deno.serve(async (req: Request) => {
         ? `\nWhat you remember about this person from past entries:\n${memorySummary}`
         : `\nYou have no prior memory of this person yet. This may be their first entry.`,
       domainOverlay,
-      `\n---\n# WISDOM CORPUS — MAGNETISM OS\n\n${MAGNETISM_OS}`,
-      `\n---\n# WISDOM CORPUS — PRINCIPAL OS\n\n${PRINCIPAL_OS}`,
+      `\n---\n# WISDOM CORPUS: MAGNETISM OS\n\n${MAGNETISM_OS}`,
+      `\n---\n# WISDOM CORPUS: PRINCIPAL OS\n\n${PRINCIPAL_OS}`,
     ].join("\n");
-
-    const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
-    if (!ANTHROPIC_KEY) {
-      return json({ error: "Server missing ANTHROPIC_API_KEY" }, 500);
-    }
 
     // Fire both Claude calls in parallel: Sonnet for the main reply, Haiku
     // for the essence line that titles this entry in the left spine. Running
@@ -222,8 +354,15 @@ Deno.serve(async (req: Request) => {
         role: "user",
         content: message,
         essence: essence || null,
+        flagged_by_safety_gate: false,
       },
-      { user_id: user.id, session_id: sessionId, role: "assistant", content: responseText },
+      {
+        user_id: user.id,
+        session_id: sessionId,
+        role: "assistant",
+        content: responseText,
+        flagged_by_safety_gate: false,
+      },
     ]);
 
     if (insertError) {
@@ -231,12 +370,66 @@ Deno.serve(async (req: Request) => {
       // Don't fail the request over a logging write, the person still gets their reply.
     }
 
-    return json({ response: responseText, essence }, 200);
+    return json({ response: responseText, essence, flagged: false }, 200);
   } catch (err) {
     console.error("[magnetism-chat] unexpected error:", err);
     return json({ error: (err as Error).message }, 500);
   }
 });
+
+// ─── SAFETY CLASSIFIER ────────────────────────────────────────────────
+// Returns { crisis, language, error }.
+// crisis / language are always defined so callers can branch simply.
+// error is set when the classifier call itself failed or returned garbage;
+// callers can log it and choose fail-open or fail-closed behavior.
+async function classifyMessage(
+  message: string,
+  key: string,
+): Promise<{ crisis: boolean; language: string; error: string | null }> {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: SAFETY_MODEL,
+        max_tokens: 60,
+        system: SAFETY_INSTRUCTION,
+        messages: [{ role: "user", content: message }],
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return { crisis: false, language: "other", error: `http ${res.status}: ${errText.slice(0, 200)}` };
+    }
+
+    const data = await res.json();
+    const raw = (data.content ?? [])
+      .filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text)
+      .join(" ")
+      .trim();
+
+    // Extract JSON. Haiku sometimes wraps output in text or code fences even
+    // when instructed not to, so we pluck the first {...} block rather than
+    // parsing the whole string.
+    const match = raw.match(/\{[^{}]*\}/);
+    if (!match) {
+      return { crisis: false, language: "other", error: `no json in response: ${raw.slice(0, 120)}` };
+    }
+
+    const parsed = JSON.parse(match[0]);
+    const crisis = parsed.crisis === true;
+    const language = typeof parsed.language === "string" ? parsed.language : "other";
+    return { crisis, language, error: null };
+  } catch (err) {
+    return { crisis: false, language: "other", error: (err as Error).message };
+  }
+}
 
 function sanitizeEssence(text: string): string {
   return sanitizeReply(text)

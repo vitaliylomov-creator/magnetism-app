@@ -366,10 +366,19 @@
 
       if (!res.ok) {
         replyTextEl.textContent = "Something went wrong. " + (data.error || "");
+        againBtn.style.display = "";
       } else {
         replyTextEl.textContent = data.response;
-        // Refresh the spine so today's entry appears at the top with its essence.
-        loadSpine();
+        // On a safety-gate redirect, hide the "Write another entry" prompt.
+        // That moment is meant to stand on its own, without an invitation to
+        // keep going. The person should call, not journal more.
+        if (data.flagged) {
+          againBtn.style.display = "none";
+        } else {
+          againBtn.style.display = "";
+          // Refresh the spine so today's entry appears at the top with its essence.
+          loadSpine();
+        }
       }
       replyEl.classList.add("visible");
     } catch (err) {
@@ -402,10 +411,15 @@
   // ---- spine ----
   async function loadSpine() {
     // Fetch user entries only. RLS restricts to the caller's own rows.
+    // Flagged entries (safety-gate redirects) are excluded from the spine:
+    // the whole point of the redirect is "this moment is beyond me", so it
+    // should not become part of the person's presented archive. The row
+    // still exists in the DB for audit, just not in the diary view.
     const { data, error } = await sb
       .from("conversations")
       .select("session_id, essence, content, created_at")
       .eq("role", "user")
+      .eq("flagged_by_safety_gate", false)
       .order("created_at", { ascending: false })
       .limit(50);
 
