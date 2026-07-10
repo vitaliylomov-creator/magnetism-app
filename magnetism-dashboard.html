@@ -109,13 +109,25 @@
 
   .actions{ display:flex; align-items:center; justify-content:space-between; margin-top:24px; padding-top:20px; border-top:0.5px solid var(--border); }
   .word-hint{ font-size:12px; color: var(--t4); }
+
+  /* Send button: no text, just a small quill in a warm ink circle. Symbol
+     continuity with the quill cursor in the textarea. Hover lifts the pen
+     and rotates it slightly, as if picked up off the page. */
   button.submit{
-    font-family: var(--font-b); font-size:14px; font-weight:500; letter-spacing:0.03em;
-    background: var(--ink); color: var(--paper); border:none; border-radius:100px;
-    padding:13px 30px; cursor:pointer; transition: opacity 0.2s;
+    width: 52px; height: 52px; border-radius: 50%;
+    padding: 0; display: flex; align-items: center; justify-content: center;
+    background: var(--ink); border: none; cursor: pointer;
+    transition: transform 0.25s var(--ease), background 0.2s;
   }
-  button.submit:hover{ opacity:0.88; }
-  button.submit:disabled{ opacity:0.4; cursor:default; }
+  button.submit svg{
+    width: 22px; height: 22px;
+    transition: transform 0.25s var(--ease);
+  }
+  button.submit:hover{ background: var(--gold-deep); transform: translateY(-2px); }
+  button.submit:hover svg{ transform: translate(1px, -1px) rotate(-8deg); }
+  button.submit:active{ transform: translateY(0); }
+  button.submit:disabled{ opacity: 0.35; cursor: default; transform: none; }
+  button.submit:disabled:hover svg{ transform: none; }
 
   /* ---------- WAITING (flower loader) ---------- */
   .waiting{
@@ -221,8 +233,17 @@
         <textarea id="entry" placeholder="Write exactly what you'd never say out loud. No one else opens this page."></textarea>
 
         <div class="actions">
-          <span class="word-hint">One complete entry. Submit when you're done.</span>
-          <button class="submit" id="submitBtn">Submit</button>
+          <span class="word-hint">One complete entry. Send it when you're done.</span>
+          <button class="submit" id="submitBtn" aria-label="Send entry" title="Send entry">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M4 20 L18 6" stroke="#F4EFE5" stroke-width="1.4" stroke-linecap="round" fill="none"/>
+              <path d="M4 20 L6 18.5 L4.5 21 Z" fill="#F4EFE5"/>
+              <path d="M17.5 6.5 L14.5 6" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
+              <path d="M17.5 6.5 L18 3" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
+              <path d="M17.5 6.5 L20.5 5" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
+              <path d="M17.5 6.5 L21 8" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
+            </svg>
+          </button>
         </div>
 
         <div class="waiting" id="waiting">
