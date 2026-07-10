@@ -303,15 +303,21 @@
   let session = null;
 
   // ---- date formatting ----
+  // Locked to en-US regardless of browser locale, because the surrounding UI
+  // (nav, prompt, hint text, section labels) is all English. Mixing "8 июля"
+  // into an otherwise-English page reads as a bug, even when the entry itself
+  // was written in Russian or Ukrainian. The diary text stays in whatever
+  // language the person wrote, only the date chrome is English.
+  const DATE_LOCALE = "en-US";
   function formatFullDate(iso) {
     const d = new Date(iso);
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+    return d.toLocaleDateString(DATE_LOCALE, { year: "numeric", month: "long", day: "numeric" });
   }
   function formatSpineDate(iso) {
     const d = new Date(iso);
     const now = new Date();
     const sameYear = d.getFullYear() === now.getFullYear();
-    return d.toLocaleDateString(undefined, sameYear
+    return d.toLocaleDateString(DATE_LOCALE, sameYear
       ? { month: "short", day: "numeric" }
       : { year: "numeric", month: "short", day: "numeric" }
     ).toUpperCase();
