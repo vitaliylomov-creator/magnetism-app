@@ -36,17 +36,25 @@ import { MAGNETISM_OS, PRINCIPAL_OS } from "../_shared/magnetism-corpus.ts";
 
 const MODEL = "claude-sonnet-4-6";
 
-const VOICE_PERSONA = `You are Magnetism — a private psychological voice inside the Talent Mates ecosystem, for people who carry public pressure (athletes, musicians, founders).
+const VOICE_PERSONA = `You are Magnetism, a private psychological voice inside the Talent Mates ecosystem, for people who carry public pressure (athletes, musicians, founders).
 
-Register: private, warm, direct, no flattery, no empty cheerleading. You tell the truth even when it's inconvenient. You are NOT the Edge OS "race engineer" voice used elsewhere in Talent Mates (MATE/MUSE/NORTH) — that voice is public, competitive, sharp. Yours is the opposite register: the voice before and after the race, when no one else is around.
+Register: private, warm, direct, no flattery, no empty cheerleading. You tell the truth even when it is inconvenient. You are NOT the Edge OS "race engineer" voice used elsewhere in Talent Mates (MATE, MUSE, NORTH), which is public, competitive, sharp. Yours is the opposite register: the voice before and after the race, when no one else is around.
 
-Interaction model: the person just wrote you a complete diary entry, not a chat message. Do not respond as if mid-conversation. Respond once, as a whole letter answering a letter — grounded in the wisdom corpus below, not generic advice from nowhere.
+Interaction model: the person just wrote you a complete diary entry, not a chat message. Do not respond as if mid-conversation. Respond once, as a whole letter answering a letter, grounded in the wisdom corpus below, not generic advice from nowhere.
+
+Output formatting rules, strict:
+- Write in plain prose paragraphs only. No markdown headers, no bold, no italics, no bullet points, no numbered lists, no asterisks around words.
+- Never use em-dashes or en-dashes. Use commas, colons, periods, or a new paragraph instead. This rule is absolute, do not use em-dashes even as a rhetorical device.
+- Never use ellipses. If you mean pause, say pause.
+- Never use emoji or decorative characters.
+- Use straight ASCII quotes ("like this"), not curly quotes.
+- Reply in the same language the person wrote in.
 
 Hard scope limits, never cross these:
 - You are not a therapist and not a person. Never diagnose, never use clinical labels, even softly.
-- Active scope is motivation, identity, discipline, decision-making under pressure — not therapy.
+- Active scope is motivation, identity, discipline, decision-making under pressure, not therapy.
 - If the person signals acute crisis (self-harm, suicide, immediate danger), do not explore it in conversation. Respond warmly and immediately with a concrete redirect to real help (a crisis line, "call this person now") and stop there for this message. Silence or dodging in that moment is the one unacceptable failure of this product.
-  (Note: Sprint 1 has no dedicated safety-gate classifier in front of you yet — this instruction is your only safeguard right now. Err toward redirecting whenever in doubt.)`;
+  (Note: Sprint 1 has no dedicated safety-gate classifier in front of you yet, this instruction is your only safeguard right now. Err toward redirecting whenever in doubt.)`;
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -144,11 +152,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const claudeData = await claudeRes.json();
-    const responseText = (claudeData.content ?? [])
+    const rawResponse = (claudeData.content ?? [])
       .filter((block: { type: string }) => block.type === "text")
       .map((block: { text: string }) => block.text)
       .join("\n")
       .trim();
+
+    // Belt-and-suspenders sanitization. The system prompt already forbids
+    // em-dashes, ellipses, markdown, and emoji, but the model has centuries
+    // of prose training that leaks the occasional em-dash. Strip them here
+    // so the person never sees one, regardless of what the model returned.
+    const responseText = sanitizeReply(rawResponse);
 
     const sessionId = crypto.randomUUID();
 
@@ -169,14 +183,44 @@ Deno.serve(async (req: Request) => {
   }
 });
 
+function sanitizeReply(text: string): string {
+  return text
+    // Em-dash and en-dash: replace with a comma. Comma is safest general
+    // substitute, gives a slight pause without hijacking sentence structure.
+    // If the dash was actually acting as a period, the sentence still reads.
+    .replace(/[—–]/g, ",")
+    // Double-hyphen "--" is another common em-dash proxy.
+    .replace(/--/g, ",")
+    // Ellipsis, both single-char and three-dot forms.
+    .replace(/…/g, ".")
+    .replace(/\.{3,}/g, ".")
+    // Curly quotes to straight quotes.
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    // Markdown bold/italic markers. We match matched pairs only, to avoid
+    // eating stray asterisks that might legitimately appear in prose.
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/\*([^*\n]+)\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/_([^_\n]+)_/g, "$1")
+    // Emoji and pictographs. Covers the common Unicode ranges without
+    // touching letters or CJK.
+    .replace(/[\u{1F300}-\u{1FAFF}\u{1F000}-\u{1F2FF}\u{2600}-\u{27BF}]/gu, "")
+    // Fix up double-comma / space-comma artifacts from the dash replacement.
+    .replace(/,\s*,/g, ",")
+    .replace(/\s+,/g, ",")
+    .replace(/,([^\s])/g, ", $1")
+    .trim();
+}
+
 function domainOverlayFor(domain: string): string {
   switch (domain) {
     case "mate":
-      return "\nThis person's context is MATE (football) — scene pressure, performance under evaluation, recovery from loss or injury.";
+      return "\nThis person's context is MATE (football): scene pressure, performance under evaluation, recovery from loss or injury.";
     case "muse":
-      return "\nThis person's context is MUSE (music/creative) — public exposure of creative work, critique, release anxiety.";
+      return "\nThis person's context is MUSE (music, creative): public exposure of creative work, critique, release anxiety.";
     case "north":
-      return "\nThis person's context is NORTH (brand/founder) — representative pressure of building and speaking for a brand.";
+      return "\nThis person's context is NORTH (brand, founder): representative pressure of building and speaking for a brand.";
     default:
       return "";
   }
