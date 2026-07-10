@@ -35,6 +35,19 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { MAGNETISM_OS, PRINCIPAL_OS } from "../_shared/magnetism-corpus.ts";
 
 const MODEL = "claude-sonnet-4-6";
+const ESSENCE_MODEL = "claude-haiku-4-5-20251001";
+
+const ESSENCE_INSTRUCTION = `You will receive a diary entry. Distill it into exactly one line that could serve as the title of that diary page.
+
+Rules, strict:
+- One sentence, present tense, in the same language the entry was written in.
+- Written in the writer's voice, not about the writer. Use "I" or an implicit first-person, never "the writer" or "they".
+- Under 12 words.
+- No em-dashes, no en-dashes, no ellipses, no markdown, no emoji, no quotation marks around the whole line.
+- No period at the end.
+- Concrete. Name the actual thing, not the abstract feeling. "I keep discounting before anyone asks" is right. "Struggling with self-worth" is wrong.
+
+Return only the line, nothing else. No preamble, no explanation.`;
 
 const VOICE_PERSONA = `You are Magnetism, a private psychological voice inside the Talent Mates ecosystem, for people who carry public pressure (athletes, musicians, founders).
 
@@ -119,7 +132,7 @@ Deno.serve(async (req: Request) => {
       VOICE_PERSONA,
       memorySummary
         ? `\nWhat you remember about this person from past entries:\n${memorySummary}`
-        : `\nYou have no prior memory of this person yet — this may be their first entry.`,
+        : `\nYou have no prior memory of this person yet. This may be their first entry.`,
       domainOverlay,
       `\n---\n# WISDOM CORPUS — MAGNETISM OS\n\n${MAGNETISM_OS}`,
       `\n---\n# WISDOM CORPUS — PRINCIPAL OS\n\n${PRINCIPAL_OS}`,
@@ -130,20 +143,41 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Server missing ANTHROPIC_API_KEY" }, 500);
     }
 
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1500,
-        system: systemPrompt,
-        messages: [{ role: "user", content: message }],
+    // Fire both Claude calls in parallel: Sonnet for the main reply, Haiku
+    // for the essence line that titles this entry in the left spine. Running
+    // in parallel means the total latency is just the slower of the two
+    // (Sonnet), not the sum. Failure of the essence call is tolerable, we
+    // still return the reply; failure of the reply call fails the request.
+    const [claudeRes, essenceRes] = await Promise.all([
+      fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": ANTHROPIC_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 1500,
+          system: systemPrompt,
+          messages: [{ role: "user", content: message }],
+        }),
       }),
-    });
+      fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": ANTHROPIC_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: ESSENCE_MODEL,
+          max_tokens: 60,
+          system: ESSENCE_INSTRUCTION,
+          messages: [{ role: "user", content: message }],
+        }),
+      }),
+    ]);
 
     if (!claudeRes.ok) {
       const errText = await claudeRes.text();
@@ -164,24 +198,61 @@ Deno.serve(async (req: Request) => {
     // so the person never sees one, regardless of what the model returned.
     const responseText = sanitizeReply(rawResponse);
 
+    // Essence is best-effort. If Haiku failed or returned junk, the entry
+    // still saves without one and the spine will fall back to date-only.
+    let essence = "";
+    if (essenceRes.ok) {
+      const essenceData = await essenceRes.json();
+      const rawEssence = (essenceData.content ?? [])
+        .filter((block: { type: string }) => block.type === "text")
+        .map((block: { text: string }) => block.text)
+        .join(" ")
+        .trim();
+      essence = sanitizeEssence(rawEssence);
+    } else {
+      console.warn("[magnetism-chat] essence call failed:", essenceRes.status);
+    }
+
     const sessionId = crypto.randomUUID();
 
     const { error: insertError } = await admin.from("conversations").insert([
-      { user_id: user.id, session_id: sessionId, role: "user", content: message },
+      {
+        user_id: user.id,
+        session_id: sessionId,
+        role: "user",
+        content: message,
+        essence: essence || null,
+      },
       { user_id: user.id, session_id: sessionId, role: "assistant", content: responseText },
     ]);
 
     if (insertError) {
       console.error("[magnetism-chat] insert error:", insertError);
-      // Don't fail the request over a logging write — the person still gets their reply.
+      // Don't fail the request over a logging write, the person still gets their reply.
     }
 
-    return json({ response: responseText }, 200);
+    return json({ response: responseText, essence }, 200);
   } catch (err) {
     console.error("[magnetism-chat] unexpected error:", err);
     return json({ error: (err as Error).message }, 500);
   }
 });
+
+function sanitizeEssence(text: string): string {
+  return sanitizeReply(text)
+    // Essence is one line, collapse any newlines Haiku sneaks in.
+    .replace(/\s*\n+\s*/g, " ")
+    // Strip any surrounding quotes the model might add despite the instruction.
+    .replace(/^["'`]+|["'`]+$/g, "")
+    // Drop trailing punctuation. Essence is a title, not a sentence.
+    .replace(/[.,;:!?]+$/, "")
+    // Guardrail on length: 12 words max per instruction; hard-truncate if
+    // Haiku over-runs. Word count is a rough proxy but adequate for a title.
+    .split(/\s+/)
+    .slice(0, 14)
+    .join(" ")
+    .trim();
+}
 
 function sanitizeReply(text: string): string {
   return text
