@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sign in — Magnetism</title>
+<meta name="description" content="Sign in to Magnetism. Private, by invitation." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --cream: #F4EFE5; --cream-deep: #ECE3D2; --paper: #FBF9F4;
+    --ink: #24221E; --t1:#24221E; --t2: rgba(36,34,30,0.68); --t3: rgba(36,34,30,0.48);
+    --border: rgba(36,34,30,0.12); --border-mid: rgba(36,34,30,0.20); --border-strong: rgba(36,34,30,0.36);
+    --gold: #A9702F; --gold-soft: rgba(169,112,47,0.14);
+    --error: #B3432E;
+    --font-d: 'DM Serif Display', Georgia, serif;
+    --font-b: 'DM Sans', system-ui, sans-serif;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background: var(--cream); color: var(--ink); font-family: var(--font-b); font-weight:300;
+    padding: 24px;
+  }
+  .card{
+    width:100%; max-width:420px; background: var(--paper);
+    border:0.5px solid var(--border); border-radius:16px; padding:44px 40px;
+  }
+  .brand{ font-size:11px; letter-spacing:0.22em; text-transform:uppercase; color: var(--t3); margin-bottom:22px; }
+  h1{ font-family: var(--font-d); font-weight:400; font-size:30px; letter-spacing:-0.015em; margin-bottom:10px; }
+  .sub{ font-size:14px; color: var(--t2); margin-bottom:30px; line-height:1.6; }
+  label{ display:block; font-size:12px; color: var(--t3); letter-spacing:0.04em; margin-bottom:6px; }
+  input{
+    width:100%; font-family: var(--font-b); font-size:15px; color: var(--ink);
+    background: transparent; border: 0.5px solid var(--border-mid); border-radius:10px;
+    padding:12px 14px; margin-bottom:18px; outline:none; transition: border-color 0.2s;
+  }
+  input:focus{ border-color: var(--gold); }
+  button.primary{
+    width:100%; font-family: var(--font-b); font-size:14px; font-weight:500; letter-spacing:0.03em;
+    background: var(--ink); color: var(--paper); border:none; border-radius:100px;
+    padding:14px; cursor:pointer; transition: opacity 0.2s; margin-top:6px;
+  }
+  button.primary:hover{ opacity:0.88; }
+  button.primary:disabled{ opacity:0.5; cursor:default; }
+  button.ghost{
+    width:100%; font-family: var(--font-b); font-size:14px; color: var(--ink);
+    background: transparent; border: 0.5px solid var(--border-strong); border-radius:100px;
+    padding:13px; cursor:pointer; margin-top:12px; transition: background 0.2s;
+  }
+  button.ghost:hover{ background: rgba(36,34,30,0.05); }
+  .toggle{ margin-top:22px; text-align:center; font-size:13px; color: var(--t3); }
+  .toggle a{ color: var(--gold); text-decoration:none; cursor:pointer; }
+  .msg{ font-size:13px; margin-top:14px; min-height:1em; }
+  .msg.error{ color: var(--error); }
+  .msg.ok{ color: var(--gold); }
+  .boundary{ margin-top:28px; padding-top:20px; border-top:0.5px solid var(--border); font-size:12px; color: var(--t3); line-height:1.6; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="brand">Talent Mates · Magnetism</div>
+  <h1 id="formTitle">Welcome back.</h1>
+  <p class="sub" id="formSub">Sign in to write.</p>
+
+  <form id="authForm">
+    <label for="email">Email</label>
+    <input type="email" id="email" autocomplete="email" required />
+
+    <label for="password">Password</label>
+    <input type="password" id="password" autocomplete="current-password" required minlength="6" />
+
+    <button type="submit" class="primary" id="submitBtn">Sign in</button>
+  </form>
+
+  <button class="ghost" id="googleBtn">Continue with Google</button>
+
+  <div class="msg" id="msg"></div>
+
+  <div class="toggle">
+    <span id="toggleText">Don't have access yet?</span>
+    <a id="toggleLink">Create account</a>
+  </div>
+
+  <p class="boundary">Magnetism is not a person and not a therapist, and it does not replace one. If you're in crisis, please contact a crisis line or emergency services in your country.</p>
+</div>
+
+<script>
+  const SUPABASE_URL = "https://ocsrmgneyttdkingkiev.supabase.co";
+  const SUPABASE_ANON_KEY = "REPLACE_WITH_ANON_KEY";
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let mode = "signin"; // or "signup"
+
+  const form = document.getElementById("authForm");
+  const submitBtn = document.getElementById("submitBtn");
+  const msg = document.getElementById("msg");
+  const formTitle = document.getElementById("formTitle");
+  const formSub = document.getElementById("formSub");
+  const toggleText = document.getElementById("toggleText");
+  const toggleLink = document.getElementById("toggleLink");
+
+  // ?logout=1 escape hatch — mirrors the pattern used across Talent Mates
+  // auth pages for when a cached token points at a deleted user.
+  if (new URLSearchParams(window.location.search).get("logout") === "1") {
+    sb.auth.signOut();
+  }
+
+  function setMode(next) {
+    mode = next;
+    if (mode === "signin") {
+      formTitle.textContent = "Welcome back.";
+      formSub.textContent = "Sign in to write.";
+      submitBtn.textContent = "Sign in";
+      toggleText.textContent = "Don't have access yet?";
+      toggleLink.textContent = "Create account";
+    } else {
+      formTitle.textContent = "By invitation.";
+      formSub.textContent = "Create your account.";
+      submitBtn.textContent = "Create account";
+      toggleText.textContent = "Already have an account?";
+      toggleLink.textContent = "Sign in";
+    }
+    msg.textContent = "";
+    msg.className = "msg";
+  }
+
+  toggleLink.addEventListener("click", () => setMode(mode === "signin" ? "signup" : "signin"));
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+
+    submitBtn.disabled = true;
+    msg.textContent = "";
+    msg.className = "msg";
+
+    const { data, error } = mode === "signin"
+      ? await sb.auth.signInWithPassword({ email, password })
+      : await sb.auth.signUp({ email, password });
+
+    submitBtn.disabled = false;
+
+    if (error) {
+      msg.textContent = error.message;
+      msg.className = "msg error";
+      return;
+    }
+
+    if (mode === "signup" && !data.session) {
+      msg.textContent = "Check your email to confirm your account.";
+      msg.className = "msg ok";
+      return;
+    }
+
+    window.location.href = "magnetism-onboarding.html";
+  });
+
+  document.getElementById("googleBtn").addEventListener("click", async () => {
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin + "/magnetism-onboarding.html" },
+    });
+    if (error) {
+      msg.textContent = error.message;
+      msg.className = "msg error";
+    }
+  });
+
+  // Already signed in? Skip straight past auth.
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (session) window.location.href = "magnetism-dashboard.html";
+  });
+</script>
+</body>
+</html>

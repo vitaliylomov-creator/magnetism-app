@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Getting started — Magnetism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --cream: #F4EFE5; --paper: #FBF9F4; --ink: #24221E;
+    --t2: rgba(36,34,30,0.68); --t3: rgba(36,34,30,0.48);
+    --border: rgba(36,34,30,0.12); --border-mid: rgba(36,34,30,0.20); --border-strong: rgba(36,34,30,0.36);
+    --gold: #A9702F; --gold-soft: rgba(169,112,47,0.14);
+    --font-d: 'DM Serif Display', Georgia, serif;
+    --font-b: 'DM Sans', system-ui, sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background: var(--cream); color: var(--ink); font-family: var(--font-b); font-weight:300; padding:24px;
+  }
+  .card{ width:100%; max-width:560px; background: var(--paper); border:0.5px solid var(--border); border-radius:16px; padding:48px 44px; }
+  .eyebrow{ font-size:11px; letter-spacing:0.22em; text-transform:uppercase; color: var(--t3); margin-bottom:16px; }
+  h1{ font-family: var(--font-d); font-weight:400; font-size:32px; letter-spacing:-0.015em; margin-bottom:12px; line-height:1.15; }
+  .sub{ font-size:15px; color: var(--t2); margin-bottom:34px; line-height:1.6; }
+  .domains{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:30px; }
+  .domain-opt{
+    border: 0.5px solid var(--border-mid); border-radius:12px; padding:16px 18px; cursor:pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .domain-opt.selected{ border-color: var(--gold); background: var(--gold-soft); }
+  .domain-opt .name{ font-family: var(--font-d); font-size:17px; margin-bottom:3px; }
+  .domain-opt .desc{ font-size:12.5px; color: var(--t3); }
+  label{ display:block; font-size:12px; color: var(--t3); letter-spacing:0.04em; margin-bottom:8px; }
+  textarea{
+    width:100%; min-height:140px; font-family: var(--font-b); font-size:15px; color: var(--ink);
+    background: transparent; border: 0.5px solid var(--border-mid); border-radius:10px;
+    padding:14px; outline:none; resize:vertical; line-height:1.6; transition: border-color 0.2s;
+  }
+  textarea:focus{ border-color: var(--gold); }
+  .hint{ font-size:12px; color: var(--t3); margin-top:8px; }
+  button.primary{
+    width:100%; font-family: var(--font-b); font-size:14px; font-weight:500; letter-spacing:0.03em;
+    background: var(--ink); color: var(--paper); border:none; border-radius:100px;
+    padding:15px; cursor:pointer; margin-top:26px; transition: opacity 0.2s;
+  }
+  button.primary:hover{ opacity:0.88; }
+  button.primary:disabled{ opacity:0.5; cursor:default; }
+  .msg{ font-size:13px; margin-top:12px; color:#B3432E; min-height:1em; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="eyebrow">Before you start</div>
+  <h1>Where should<br/><em style="font-style:italic;font-family:var(--font-d);color:var(--t3);">this live?</em></h1>
+  <p class="sub">This just tells the voice which world you're carrying — you can leave it open.</p>
+
+  <div class="domains" id="domains">
+    <div class="domain-opt" data-domain="mate">
+      <div class="name">MATE</div>
+      <div class="desc">Football</div>
+    </div>
+    <div class="domain-opt" data-domain="muse">
+      <div class="name">MUSE</div>
+      <div class="desc">Music & artists</div>
+    </div>
+    <div class="domain-opt" data-domain="north">
+      <div class="name">NORTH</div>
+      <div class="desc">Brand & founder</div>
+    </div>
+    <div class="domain-opt selected" data-domain="none">
+      <div class="name">Open</div>
+      <div class="desc">None of these, or all of them</div>
+    </div>
+  </div>
+
+  <label for="entry">Your first entry</label>
+  <textarea id="entry" placeholder="Write what's actually on your mind right now. No one else opens this page."></textarea>
+  <div class="hint">One complete entry. Submit when you're actually done — this isn't a chat.</div>
+
+  <button class="primary" id="submitBtn">Save and continue</button>
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+  const SUPABASE_URL = "https://ocsrmgneyttdkingkiev.supabase.co";
+  const SUPABASE_ANON_KEY = "REPLACE_WITH_ANON_KEY";
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let selectedDomain = "none";
+  document.querySelectorAll(".domain-opt").forEach((el) => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll(".domain-opt").forEach((o) => o.classList.remove("selected"));
+      el.classList.add("selected");
+      selectedDomain = el.dataset.domain;
+    });
+  });
+
+  const submitBtn = document.getElementById("submitBtn");
+  const msg = document.getElementById("msg");
+
+  submitBtn.addEventListener("click", async () => {
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) {
+      window.location.href = "magnetism-auth.html";
+      return;
+    }
+
+    submitBtn.disabled = true;
+    msg.textContent = "";
+
+    const { error } = await sb
+      .from("users")
+      .update({ domain: selectedDomain })
+      .eq("id", session.user.id);
+
+    if (error) {
+      msg.textContent = error.message;
+      submitBtn.disabled = false;
+      return;
+    }
+
+    const entry = document.getElementById("entry").value.trim();
+    // Stash the first entry so the dashboard can send it on load, rather
+    // than losing it — the person already wrote it once.
+    if (entry) sessionStorage.setItem("magnetism_pending_entry", entry);
+
+    window.location.href = "magnetism-dashboard.html";
+  });
+
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (!session) window.location.href = "magnetism-auth.html";
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Magnetism</title>
+<!--
+  This file is named magnetism-dashboard.html to match the naming convention
+  used across the rest of Talent Mates (mate-dashboard, creators-dashboard).
+  Do NOT let that name pull the UI toward a metrics panel. Per
+  MAGNETISM_Project_Definition.md §4.1 and MAGNETISM_Technical_Brief §8, the
+  first and default screen is a blank page for writing — closer to a sheet
+  of paper than a product dashboard. No counters, no streaks, no progress
+  bars, ever, on this screen.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --cream: #F4EFE5; --paper: #FBF9F4; --ink: #24221E;
+    --t2: rgba(36,34,30,0.68); --t3: rgba(36,34,30,0.48); --t4: rgba(36,34,30,0.32);
+    --border: rgba(36,34,30,0.12); --border-mid: rgba(36,34,30,0.20); --border-strong: rgba(36,34,30,0.36);
+    --gold: #A9702F; --gold-soft: rgba(169,112,47,0.14);
+    --font-d: 'DM Serif Display', Georgia, serif;
+    --font-b: 'DM Sans', system-ui, sans-serif;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    min-height:100vh; background: var(--cream); color: var(--ink);
+    font-family: var(--font-b); font-weight:300; display:flex; flex-direction:column;
+  }
+  header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:22px 40px; border-bottom:0.5px solid var(--border);
+  }
+  .brand{ font-size:12px; letter-spacing:0.22em; text-transform:uppercase; color: var(--t3); }
+  .signout{ font-size:12px; color: var(--t3); cursor:pointer; background:none; border:none; font-family:var(--font-b); }
+  .signout:hover{ color: var(--ink); }
+
+  main{ flex:1; display:flex; justify-content:center; padding:64px 24px; }
+  .page{ width:100%; max-width:680px; display:flex; flex-direction:column; }
+
+  .prompt{ font-family: var(--font-d); font-weight:400; font-size:26px; letter-spacing:-0.015em; margin-bottom:28px; line-height:1.3; }
+
+  textarea{
+    width:100%; min-height:280px; font-family: var(--font-b); font-size:17px; font-weight:300;
+    color: var(--ink); background: transparent; border:none; outline:none; resize:vertical;
+    line-height:1.8; padding:0;
+  }
+  textarea::placeholder{ color: var(--t4); }
+
+  .actions{ display:flex; align-items:center; justify-content:space-between; margin-top:24px; padding-top:20px; border-top:0.5px solid var(--border); }
+  .word-hint{ font-size:12px; color: var(--t4); }
+  button.submit{
+    font-family: var(--font-b); font-size:14px; font-weight:500; letter-spacing:0.03em;
+    background: var(--ink); color: var(--paper); border:none; border-radius:100px;
+    padding:13px 30px; cursor:pointer; transition: opacity 0.2s;
+  }
+  button.submit:hover{ opacity:0.88; }
+  button.submit:disabled{ opacity:0.4; cursor:default; }
+
+  .waiting{ margin-top:32px; font-size:13.5px; color: var(--t3); display:none; align-items:center; gap:10px; }
+  .waiting.visible{ display:flex; }
+  .waiting .dot{ width:5px; height:5px; border-radius:50%; background: var(--gold); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{ opacity:0.25; } 50%{ opacity:1; } }
+
+  .reply{
+    margin-top:44px; padding-top:36px; border-top:0.5px solid var(--border);
+    display:none;
+  }
+  .reply.visible{ display:block; }
+  .reply-label{ font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color: var(--t3); margin-bottom:16px; }
+  .reply-text{ font-size:16.5px; line-height:1.85; color: var(--t1); white-space:pre-wrap; }
+
+  .again{ margin-top:32px; font-size:13px; color: var(--gold); cursor:pointer; background:none; border:none; font-family:var(--font-b); padding:0; }
+
+  footer{ padding:20px 40px; font-size:11.5px; color: var(--t4); text-align:center; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Talent Mates · Magnetism</div>
+  <button class="signout" id="signoutBtn">Sign out</button>
+</header>
+
+<main>
+  <div class="page">
+    <div class="prompt" id="prompt">What's actually on your mind right now?</div>
+
+    <textarea id="entry" placeholder="Write exactly what you'd never say out loud. No one else opens this page."></textarea>
+
+    <div class="actions">
+      <span class="word-hint">One complete entry. Submit when you're done.</span>
+      <button class="submit" id="submitBtn">Submit</button>
+    </div>
+
+    <div class="waiting" id="waiting">
+      <span class="dot"></span>
+      <span>Reading it properly. This takes a moment.</span>
+    </div>
+
+    <div class="reply" id="reply">
+      <div class="reply-label">The answer</div>
+      <div class="reply-text" id="replyText"></div>
+      <button class="again" id="againBtn">Write another entry →</button>
+    </div>
+  </div>
+</main>
+
+<footer>Magnetism is not a person and not a therapist. If you're in crisis, contact a crisis line or emergency services in your country.</footer>
+
+<script>
+  const SUPABASE_URL = "https://ocsrmgneyttdkingkiev.supabase.co";
+  const SUPABASE_ANON_KEY = "REPLACE_WITH_ANON_KEY";
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const entryEl = document.getElementById("entry");
+  const submitBtn = document.getElementById("submitBtn");
+  const waitingEl = document.getElementById("waiting");
+  const replyEl = document.getElementById("reply");
+  const replyTextEl = document.getElementById("replyText");
+  const againBtn = document.getElementById("againBtn");
+
+  let session = null;
+
+  async function submitEntry(text) {
+    entryEl.disabled = true;
+    submitBtn.disabled = true;
+    replyEl.classList.remove("visible");
+    waitingEl.classList.add("visible");
+
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/magnetism-chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ message: text }),
+      });
+
+      const data = await res.json();
+      waitingEl.classList.remove("visible");
+
+      if (!res.ok) {
+        replyTextEl.textContent = `Something went wrong: ${data.error || "unknown error"}`;
+      } else {
+        replyTextEl.textContent = data.response;
+      }
+      replyEl.classList.add("visible");
+    } catch (err) {
+      waitingEl.classList.remove("visible");
+      replyTextEl.textContent = "Couldn't reach Magnetism right now. Try again in a moment.";
+      replyEl.classList.add("visible");
+    } finally {
+      submitBtn.disabled = false;
+      entryEl.disabled = false;
+    }
+  }
+
+  submitBtn.addEventListener("click", () => {
+    const text = entryEl.value.trim();
+    if (!text) return;
+    submitEntry(text);
+  });
+
+  againBtn.addEventListener("click", () => {
+    entryEl.value = "";
+    replyEl.classList.remove("visible");
+    entryEl.focus();
+  });
+
+  document.getElementById("signoutBtn").addEventListener("click", async () => {
+    await sb.auth.signOut();
+    window.location.href = "magnetism-auth.html";
+  });
+
+  (async () => {
+    const { data } = await sb.auth.getSession();
+    session = data.session;
+    if (!session) {
+      window.location.href = "magnetism-auth.html";
+      return;
+    }
+
+    // Carry over the first entry written during onboarding, if any.
+    const pending = sessionStorage.getItem("magnetism_pending_entry");
+    if (pending) {
+      sessionStorage.removeItem("magnetism_pending_entry");
+      entryEl.value = pending;
+      submitEntry(pending);
+    }
+  })();
+</script>
+</body>
+</html>

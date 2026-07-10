@@ -1,0 +1,10 @@
+# MAGNETISM — Supabase project config
+# Linked to project: ocsrmgneyttdkingkiev
+#
+# This file is used by the Supabase CLI when running `supabase functions ...`
+# commands locally. Production deploys target the project via --project-ref.
+
+project_id = "magnetism-app"
+
+# magnetism-chat requires a signed-in caller — JWT verification stays on
+# (this is the default; no [functions.magnetism-chat] override needed).

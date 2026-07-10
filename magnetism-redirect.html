@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Magnetism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --cream: #F4EFE5;
+    --ink: #24221E;
+    --t3: rgba(36,34,30,0.48);
+    --gold: #A9702F;
+    --font-d: 'DM Serif Display', Georgia, serif;
+    --font-b: 'DM Sans', system-ui, sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{
+    height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background: var(--cream); color: var(--ink); font-family: var(--font-b); font-weight:300;
+  }
+  .mark{ font-family: var(--font-d); font-size:28px; letter-spacing:-0.01em; margin-bottom:18px; }
+  .dot{
+    width:6px; height:6px; border-radius:50%; background: var(--gold);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse{ 0%,100%{ opacity:0.25; } 50%{ opacity:1; } }
+  .note{ margin-top:14px; font-size:12.5px; color: var(--t3); letter-spacing:0.04em; }
+</style>
+</head>
+<body>
+  <div class="mark">Magnetism</div>
+  <div class="dot"></div>
+  <div class="note">One moment.</div>
+
+<script>
+  const SUPABASE_URL = "https://ocsrmgneyttdkingkiev.supabase.co";
+  const SUPABASE_ANON_KEY = "REPLACE_WITH_ANON_KEY";
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const MIN_DISPLAY_MS = 3000;
+  const started = Date.now();
+
+  async function route() {
+    const { data: { session } } = await sb.auth.getSession();
+    const dest = session ? "magnetism-dashboard.html" : "magnetism-auth.html";
+    const elapsed = Date.now() - started;
+    const wait = Math.max(0, MIN_DISPLAY_MS - elapsed);
+    setTimeout(() => { window.location.href = dest; }, wait);
+  }
+
+  route();
+</script>
+</body>
+</html>
