@@ -8,3 +8,9 @@ project_id = "magnetism-app"
 
 # magnetism-chat requires a signed-in caller — JWT verification stays on
 # (this is the default; no [functions.magnetism-chat] override needed).
+
+# magnetism-corpus-seed is called by ops/admin from CLI, not by end-user
+# JWTs. It disables Supabase's JWT gate and enforces its own bearer check
+# against SUPABASE_SERVICE_ROLE_KEY inside the function.
+[functions.magnetism-corpus-seed]
+verify_jwt = false

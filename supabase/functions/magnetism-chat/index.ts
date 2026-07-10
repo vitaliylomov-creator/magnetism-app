@@ -16,8 +16,12 @@
 //      This gate is not optional and not a feature flag. Per Project
 //      Definition §7 and Technical Brief §7, silence or avoidance in an
 //      acute-crisis moment is the one hard failure mode of this product.
-//   4. If safe: parallel Sonnet (main reply) + Haiku (essence line)
-//   5. Insert into conversations (flagged=false), return
+//   4. RAG (Sprint 3): embed the entry with OpenAI text-embedding-3-small,
+//      pull top-K wisdom_corpus rows via match_wisdom_corpus RPC, inject
+//      only those chunks into the system prompt. On embedding failure,
+//      fall back to pasting both OS docs in full (Sprint 1 style).
+//   5. If safe: parallel Sonnet (main reply) + Haiku (essence line)
+//   6. Insert into conversations (flagged=false), return
 //
 // Diary interaction model (Project Definition §4.1 / Technical Brief §8):
 // the caller sends one complete entry, this function returns one whole
@@ -50,6 +54,8 @@ import { MAGNETISM_OS, PRINCIPAL_OS } from "../_shared/magnetism-corpus.ts";
 const MODEL = "claude-sonnet-4-6";
 const ESSENCE_MODEL = "claude-haiku-4-5-20251001";
 const SAFETY_MODEL = "claude-haiku-4-5-20251001";
+const EMBED_MODEL = "text-embedding-3-small";
+const RAG_MATCH_COUNT = 4;
 
 const ESSENCE_INSTRUCTION = `You will receive a diary entry. Distill it into exactly one line that could serve as the title of that diary page.
 
@@ -265,14 +271,22 @@ Deno.serve(async (req: Request) => {
 
     const domainOverlay = domainOverlayFor(domain);
 
+    // Sprint 3 RAG: embed the entry, pull top-K wisdom_corpus chunks by
+    // cosine similarity, inject only those chunks into the system prompt.
+    // If the OpenAI embedding call fails or returns no matches, fall back
+    // to pasting both OS docs in full (Sprint 1 behavior). Fail-open here
+    // is acceptable because a broader-context reply is still coherent,
+    // just more expensive. Fail-closed for the safety gate is different:
+    // there, silence is the failure mode.
+    const corpusBlock = await buildCorpusBlock(message, admin);
+
     const systemPrompt = [
       VOICE_PERSONA,
       memorySummary
         ? `\nWhat you remember about this person from past entries:\n${memorySummary}`
         : `\nYou have no prior memory of this person yet. This may be their first entry.`,
       domainOverlay,
-      `\n---\n# WISDOM CORPUS: MAGNETISM OS\n\n${MAGNETISM_OS}`,
-      `\n---\n# WISDOM CORPUS: PRINCIPAL OS\n\n${PRINCIPAL_OS}`,
+      `\n---\n${corpusBlock}`,
     ].join("\n");
 
     // Fire both Claude calls in parallel: Sonnet for the main reply, Haiku
@@ -376,6 +390,74 @@ Deno.serve(async (req: Request) => {
     return json({ error: (err as Error).message }, 500);
   }
 });
+
+// ─── RAG: RELEVANT-EXCERPTS CORPUS BLOCK ──────────────────────────────
+// Embeds the user's entry, pulls top-K wisdom_corpus rows by cosine
+// distance, returns a formatted corpus block for the system prompt.
+// On any failure, falls back to pasting the full corpus (Sprint 1 style)
+// so the reply always has grounding, just with more tokens.
+async function buildCorpusBlock(
+  message: string,
+  admin: ReturnType<typeof createClient>,
+): Promise<string> {
+  const fullCorpus =
+    `# WISDOM CORPUS: MAGNETISM OS\n\n${MAGNETISM_OS}\n\n---\n\n# WISDOM CORPUS: PRINCIPAL OS\n\n${PRINCIPAL_OS}`;
+
+  const openaiKey = Deno.env.get("OPENAI_API_KEY") ?? "";
+  if (!openaiKey) {
+    console.warn("[magnetism-chat] OPENAI_API_KEY not set, falling back to full corpus");
+    return fullCorpus;
+  }
+
+  try {
+    const embRes = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "authorization": `Bearer ${openaiKey}`,
+      },
+      body: JSON.stringify({ model: EMBED_MODEL, input: message }),
+    });
+
+    if (!embRes.ok) {
+      const errText = await embRes.text();
+      console.warn("[magnetism-chat] embed failed:", embRes.status, errText.slice(0, 120));
+      return fullCorpus;
+    }
+
+    const embData = await embRes.json();
+    const queryEmbedding: number[] | undefined = embData?.data?.[0]?.embedding;
+    if (!queryEmbedding) {
+      console.warn("[magnetism-chat] no embedding in response");
+      return fullCorpus;
+    }
+
+    const { data: matches, error } = await admin.rpc("match_wisdom_corpus", {
+      query_embedding: queryEmbedding,
+      match_count: RAG_MATCH_COUNT,
+    });
+
+    if (error) {
+      console.warn("[magnetism-chat] rpc error:", error.message);
+      return fullCorpus;
+    }
+
+    if (!matches || matches.length === 0) {
+      console.warn("[magnetism-chat] no matches, wisdom_corpus may be empty");
+      return fullCorpus;
+    }
+
+    const chunkBlocks = matches.map((m: { document: string; module: string; content: string }) => {
+      const docLabel = m.document.replace("_", " ").toUpperCase();
+      return `## From ${docLabel}: ${m.module}\n\n${m.content}`;
+    }).join("\n\n---\n\n");
+
+    return `# WISDOM CORPUS (relevant excerpts for this entry)\n\n${chunkBlocks}`;
+  } catch (err) {
+    console.warn("[magnetism-chat] RAG unexpected error:", (err as Error).message);
+    return fullCorpus;
+  }
+}
 
 // ─── SAFETY CLASSIFIER ────────────────────────────────────────────────
 // Returns { crisis, language, error }.
