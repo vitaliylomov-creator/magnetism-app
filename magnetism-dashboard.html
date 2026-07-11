@@ -101,6 +101,7 @@
     display:grid;
     grid-template-columns: 240px 1fr;
     min-height: 0;
+    overflow: hidden;
   }
 
   /* ---------- SPINE ---------- */
@@ -138,27 +139,84 @@
   .spine-empty.visible{ display:block; }
 
   /* ---------- PAGE (right side) ---------- */
-  .page-wrap{ padding: 64px 48px; display:flex; justify-content:center; }
-  .page-inner{ width:100%; max-width: 640px; }
+  /* Chat-shaped layout on today view: fixed header at top, message stream
+     that scrolls in the middle, composer glued to the bottom. Past view
+     reuses the same wrapper but scrolls normally as a static page. */
+  .page-wrap{
+    display: flex; justify-content: center;
+    overflow: hidden; min-height: 0;
+  }
+  .page-inner{
+    width: 100%; max-width: 720px;
+    display: flex; flex-direction: column;
+    min-height: 0; height: 100%;
+  }
 
+  .today-view{
+    display: flex; flex-direction: column;
+    min-height: 0; height: 100%;
+    padding: 40px 48px 0;
+  }
+  .today-view[hidden]{ display: none; }
+
+  .today-header{ flex-shrink: 0; }
   .date-line{
     font-family: var(--font-d); font-style: italic; color: var(--t3);
-    font-size: 15px; margin-bottom: 30px;
+    font-size: 15px; margin-bottom: 18px;
   }
-  .prompt{ font-family: var(--font-d); font-weight:400; font-size:26px; letter-spacing:-0.015em; margin-bottom:28px; line-height:1.3; }
+  .today-prompt{
+    font-family: var(--font-d); font-weight: 400; font-size: 22px;
+    letter-spacing: -0.015em; line-height: 1.3; color: var(--t3);
+    margin-bottom: 28px;
+  }
+  .today-prompt.dim{ color: var(--t4); font-size: 15px; font-style: italic; }
 
-  /* Quill cursor. Small feather with the nib as the hotspot, gold-toned to
-     match the palette. Fallback to standard text I-beam if the browser
-     rejects the SVG data URI. */
+  /* ---------- STREAM (today's message history) ---------- */
+  .stream{
+    flex: 1; min-height: 0; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 40px;
+    padding: 4px 20px 32px 0;
+    margin-right: -20px; /* room for the scrollbar without shifting text */
+  }
+  .stream-block{ display: flex; flex-direction: column; gap: 10px; }
+  .stream-meta{
+    font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--t3);
+  }
+  .stream-meta.you{ color: var(--t4); }
+  .stream-meta.answer{ color: var(--gold); }
+  .stream-body{
+    font-size: 16.5px; line-height: 1.85; color: var(--t1);
+    white-space: pre-wrap;
+  }
+
+  /* ---------- COMPOSER (fixed bottom textarea) ---------- */
+  .composer{
+    flex-shrink: 0;
+    background: var(--cream);
+    padding: 18px 0 24px;
+    border-top: 0.5px solid var(--border);
+  }
+  .composer textarea{
+    min-height: 84px; max-height: 220px; resize: none;
+    padding: 8px 0;
+  }
+  .composer-actions{
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 12px;
+  }
+
+  /* Feather cursor (Lucide feather icon, gold-toned). Hotspot at the nib
+     bottom-left where the ink would touch the page. Falls back to the
+     standard text I-beam if the browser rejects the data URI. */
   textarea{
-    width:100%; min-height:280px; font-family: var(--font-b); font-size:17px; font-weight:300;
-    color: var(--ink); background: transparent; border:none; outline:none; resize:vertical;
+    width:100%; font-family: var(--font-b); font-size:17px; font-weight:300;
+    color: var(--ink); background: transparent; border:none; outline:none; resize:none;
     line-height:1.8; padding:0;
-    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M3.5 20.5 L18 6' stroke='%23A9702F' stroke-width='1.4' stroke-linecap='round' fill='none'/><path d='M3.5 20.5 L5.5 19 L4.2 22 Z' fill='%23A9702F'/><path d='M17.5 6.5 L14.5 6' stroke='%23A9702F' stroke-width='0.9' stroke-linecap='round'/><path d='M17.5 6.5 L18 3' stroke='%23A9702F' stroke-width='0.9' stroke-linecap='round'/><path d='M17.5 6.5 L20 5' stroke='%23A9702F' stroke-width='0.9' stroke-linecap='round'/><path d='M17.5 6.5 L20.5 8' stroke='%23A9702F' stroke-width='0.9' stroke-linecap='round'/></svg>") 4 20, text;
+    cursor: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23A9702F' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'><path d='M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5l6.74-6.76z'/><path d='M16 8 2 22'/><path d='M17.5 15H9'/></svg>") 3 21, text;
   }
   textarea::placeholder{ color: var(--t4); }
 
-  .actions{ display:flex; align-items:center; justify-content:space-between; margin-top:24px; padding-top:20px; border-top:0.5px solid var(--border); }
   .word-hint{ font-size:12px; color: var(--t4); }
 
   /* Send button: no text, just a small quill in a warm ink circle. Symbol
@@ -181,8 +239,9 @@
   button.submit:disabled:hover svg{ transform: none; }
 
   /* ---------- WAITING (flower loader) ---------- */
+  /* Sits in-stream as the last item while a reply is being generated. */
   .waiting{
-    margin-top:32px; font-size:13.5px; color: var(--t3);
+    font-size:13.5px; color: var(--t3);
     display:none; align-items:center; gap:14px;
   }
   .waiting.visible{ display:flex; }
@@ -207,19 +266,16 @@
     50% { opacity: 1; }
   }
 
-  /* ---------- REPLY ---------- */
-  .reply{
-    margin-top:44px; padding-top:36px; border-top:0.5px solid var(--border);
-    display:none;
-  }
-  .reply.visible{ display:block; }
-  .reply-label{ font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color: var(--t3); margin-bottom:16px; }
-  .reply-text{ font-size:16.5px; line-height:1.85; color: var(--t1); white-space:pre-wrap; }
-  .again{ margin-top:32px; font-size:13px; color: var(--gold); cursor:pointer; background:none; border:none; font-family:var(--font-b); padding:0; }
-
   /* ---------- PAST VIEW ---------- */
-  .past-view{ display:none; }
+  /* Past view is a static scrollable page inside page-inner. Unlike the
+     chat-shaped today view, no sticky composer, no bottom-glued layout. */
+  .past-view{
+    display:none; overflow-y: auto; height: 100%;
+    padding: 40px 48px;
+  }
   .past-view.visible{ display:block; }
+  .reply-label{ font-size:11px; letter-spacing:0.2em; text-transform:uppercase; color: var(--t3); margin-bottom:16px; }
+  .again{ margin-top:32px; font-size:13px; color: var(--gold); cursor:pointer; background:none; border:none; font-family:var(--font-b); padding:0; }
   /* Pill-shaped "Back to today" so returning to the writing page is
      immediately visible in past view, not a hidden gold micro-link. */
   .back-btn{
@@ -249,19 +305,20 @@
 
   /* ---------- MOBILE ---------- */
   @media (max-width: 800px){
-    main{ grid-template-columns: 1fr; }
+    main{ grid-template-columns: 1fr; grid-template-rows: auto 1fr; overflow: hidden; }
     .spine{
       border-right:none; border-bottom:0.5px solid var(--border);
-      max-height: none;
-      padding: 24px 24px 20px;
+      max-height: 120px;
+      padding: 20px 24px 16px;
     }
     .spine-list{ flex-direction: row; gap: 14px; overflow-x: auto; padding-bottom: 6px; }
     .spine-entry{
       flex: 0 0 auto; min-width: 200px; padding-left: 12px; border-left-width: 2px;
     }
-    .page-wrap{ padding: 40px 24px; }
+    .today-view{ padding: 24px 24px 0; }
+    .past-view{ padding: 32px 24px; }
     header{ padding: 18px 24px; }
-    footer{ padding: 16px 24px; }
+    footer{ padding: 14px 24px; }
   }
 </style>
 </head>
@@ -297,45 +354,51 @@
   <div class="page-wrap">
     <div class="page-inner">
 
-      <!-- TODAY VIEW -->
+      <!-- TODAY VIEW: chat-shaped. Date at top, message stream in the
+           middle (scrolls), composer sticky at bottom. Multiple complete
+           entries per day are allowed here (each entry is still a whole
+           thought with a single submit and a single whole reply back,
+           per Project Definition 4.1), they just accumulate on today's
+           page like a real journal you write in more than once a day. -->
       <section class="today-view" id="todayView">
-        <div class="date-line" id="dateLine"></div>
-        <div class="prompt">What's actually on your mind right now?</div>
+        <div class="today-header">
+          <div class="date-line" id="dateLine"></div>
+          <div class="today-prompt" id="todayPrompt">What's actually on your mind right now?</div>
+        </div>
 
-        <textarea id="entry" placeholder="Write exactly what you'd never say out loud. No one else opens this page."></textarea>
-
-        <div class="actions">
-          <span class="word-hint">One complete entry. Send it when you're done.</span>
-          <button class="submit" id="submitBtn" aria-label="Send entry" title="Send entry">
-            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M4 20 L18 6" stroke="#F4EFE5" stroke-width="1.4" stroke-linecap="round" fill="none"/>
-              <path d="M4 20 L6 18.5 L4.5 21 Z" fill="#F4EFE5"/>
-              <path d="M17.5 6.5 L14.5 6" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
-              <path d="M17.5 6.5 L18 3" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
-              <path d="M17.5 6.5 L20.5 5" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
-              <path d="M17.5 6.5 L21 8" stroke="#F4EFE5" stroke-width="0.9" stroke-linecap="round"/>
+        <div class="stream" id="stream">
+          <div class="waiting" id="waiting">
+            <svg class="flower" viewBox="-16 -16 32 32" xmlns="http://www.w3.org/2000/svg">
+              <g class="petals">
+                <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F"/>
+                <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(72)"/>
+                <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(144)"/>
+                <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(216)"/>
+                <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(288)"/>
+              </g>
+              <circle cx="0" cy="0" r="2.4" fill="#5a3d15"/>
             </svg>
-          </button>
+            <span>Reading it properly. This takes a moment.</span>
+          </div>
         </div>
 
-        <div class="waiting" id="waiting">
-          <svg class="flower" viewBox="-16 -16 32 32" xmlns="http://www.w3.org/2000/svg">
-            <g class="petals">
-              <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F"/>
-              <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(72)"/>
-              <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(144)"/>
-              <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(216)"/>
-              <ellipse cx="0" cy="-8" rx="3.4" ry="6.5" fill="#A9702F" transform="rotate(288)"/>
-            </g>
-            <circle cx="0" cy="0" r="2.4" fill="#5a3d15"/>
-          </svg>
-          <span>Reading it properly. This takes a moment.</span>
-        </div>
-
-        <div class="reply" id="reply">
-          <div class="reply-label">The answer</div>
-          <div class="reply-text" id="replyText"></div>
-          <button class="again" id="againBtn">Write another entry &rarr;</button>
+        <div class="composer">
+          <textarea id="entry" placeholder="Write exactly what you'd never say out loud. No one else opens this page."></textarea>
+          <div class="composer-actions">
+            <span class="word-hint">One complete entry. Send it when you're done.</span>
+            <button class="submit" id="submitBtn" aria-label="Send entry" title="Send entry">
+              <!-- Lucide feather glyph. Reads unambiguously as a real feather:
+                   soft curved vane, central rib line, and the extended shaft
+                   ending in a nib bottom-left. Same shape used in the cursor. -->
+              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+                   fill="none" stroke="#F4EFE5" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/>
+                <path d="M16 8 2 22"/>
+                <path d="M17.5 15H9"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -364,9 +427,8 @@
   const entryEl = document.getElementById("entry");
   const submitBtn = document.getElementById("submitBtn");
   const waitingEl = document.getElementById("waiting");
-  const replyEl = document.getElementById("reply");
-  const replyTextEl = document.getElementById("replyText");
-  const againBtn = document.getElementById("againBtn");
+  const streamEl = document.getElementById("stream");
+  const todayPromptEl = document.getElementById("todayPrompt");
   const dateLineEl = document.getElementById("dateLine");
   const spineListEl = document.getElementById("spineList");
   const spineEmptyEl = document.getElementById("spineEmpty");
@@ -404,6 +466,7 @@
     pastViewEl.style.display = "none";
     document.querySelectorAll(".spine-entry.active").forEach(el => el.classList.remove("active"));
     entryEl.focus();
+    scrollStreamToBottom();
   }
   function showPast(sessionId, isoDate, essence, entryText, replyText) {
     todayViewEl.style.display = "none";
@@ -413,25 +476,89 @@
     document.getElementById("pastEssence").textContent = essence || "";
     document.getElementById("pastEntryText").textContent = entryText;
     document.getElementById("pastReplyText").textContent = replyText || "";
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    pastViewEl.scrollTop = 0;
   }
   document.getElementById("backBtn").addEventListener("click", showToday);
+  document.getElementById("pastNewEntryBtn").addEventListener("click", showToday);
 
-  // Bottom-of-past-view affordance. Clears any leftover text in the today
-  // textarea so the writing page opens fresh, not pre-filled with whatever
-  // the person last submitted.
-  document.getElementById("pastNewEntryBtn").addEventListener("click", () => {
-    entryEl.value = "";
-    replyEl.classList.remove("visible");
-    showToday();
-  });
+  // ---- stream ----
+  // Renders one message block into today's stream. `role` is "user" or
+  // "assistant". Waiting spinner is kept as the last child of stream, so
+  // we always insert new blocks BEFORE it and it stays visually at the
+  // end while a reply is being generated.
+  function appendToStream(role, content, opts = {}) {
+    const block = document.createElement("div");
+    block.className = "stream-block";
+
+    const meta = document.createElement("div");
+    meta.className = role === "user" ? "stream-meta you" : "stream-meta answer";
+    meta.textContent = role === "user" ? "You wrote" : "The answer";
+
+    const body = document.createElement("div");
+    body.className = "stream-body";
+    body.textContent = content;
+
+    block.appendChild(meta);
+    block.appendChild(body);
+
+    streamEl.insertBefore(block, waitingEl);
+    updatePromptVisibility();
+    if (opts.scroll !== false) scrollStreamToBottom();
+  }
+
+  function scrollStreamToBottom() {
+    // Wait a tick so the newly inserted node has laid out.
+    requestAnimationFrame(() => {
+      streamEl.scrollTop = streamEl.scrollHeight;
+    });
+  }
+
+  function updatePromptVisibility() {
+    // The soft "What's actually on your mind" line only makes sense on an
+    // empty page. Once the stream has content, it fades away.
+    const hasStreamContent = streamEl.querySelector(".stream-block") !== null;
+    todayPromptEl.style.display = hasStreamContent ? "none" : "";
+  }
+
+  async function loadTodayStream() {
+    // Show all of today's own entries+replies so the person returning after
+    // signout or reload picks up exactly where they left off. `today` here is
+    // the current calendar day in the user's local timezone; converted to
+    // UTC for the DB query.
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+
+    const { data, error } = await sb
+      .from("conversations")
+      .select("role, content, created_at, flagged_by_safety_gate")
+      .gte("created_at", start.toISOString())
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.warn("stream fetch error:", error);
+      return;
+    }
+
+    // Clear previous items but preserve the waiting node at the end.
+    document.querySelectorAll(".stream-block").forEach((el) => el.remove());
+    for (const row of (data ?? [])) {
+      appendToStream(row.role, row.content, { scroll: false });
+    }
+    updatePromptVisibility();
+    scrollStreamToBottom();
+  }
 
   // ---- submit ----
   async function submitEntry(text) {
+    // Optimistically render the person's own entry into the stream so the
+    // page reflects their input immediately; then start the waiting flower.
+    appendToStream("user", text);
+    entryEl.value = "";
+    entryEl.style.height = "";
     entryEl.disabled = true;
     submitBtn.disabled = true;
-    replyEl.classList.remove("visible");
     waitingEl.classList.add("visible");
+    scrollStreamToBottom();
 
     try {
       const res = await fetch(`${SUPABASE_URL}/functions/v1/magnetism-chat`, {
@@ -447,29 +574,20 @@
       waitingEl.classList.remove("visible");
 
       if (!res.ok) {
-        replyTextEl.textContent = "Something went wrong. " + (data.error || "");
-        againBtn.style.display = "";
+        appendToStream("assistant", "Something went wrong. " + (data.error || ""));
       } else {
-        replyTextEl.textContent = data.response;
-        // On a safety-gate redirect, hide the "Write another entry" prompt.
-        // That moment is meant to stand on its own, without an invitation to
-        // keep going. The person should call, not journal more.
-        if (data.flagged) {
-          againBtn.style.display = "none";
-        } else {
-          againBtn.style.display = "";
-          // Refresh the spine so today's entry appears at the top with its essence.
-          loadSpine();
-        }
+        appendToStream("assistant", data.response);
+        // Only unflagged entries make it into the spine; refresh so today's
+        // essence shows up in the left column.
+        if (!data.flagged) loadSpine();
       }
-      replyEl.classList.add("visible");
     } catch (err) {
       waitingEl.classList.remove("visible");
-      replyTextEl.textContent = "Couldn't reach Magnetism right now. Try again in a moment.";
-      replyEl.classList.add("visible");
+      appendToStream("assistant", "Couldn't reach Magnetism right now. Try again in a moment.");
     } finally {
       submitBtn.disabled = false;
       entryEl.disabled = false;
+      entryEl.focus();
     }
   }
 
@@ -479,10 +597,20 @@
     submitEntry(text);
   });
 
-  againBtn.addEventListener("click", () => {
-    entryEl.value = "";
-    replyEl.classList.remove("visible");
-    entryEl.focus();
+  // Cmd/Ctrl+Enter as an optional keyboard shortcut for people who prefer
+  // hands-on-keyboard. Plain Enter still inserts a newline, matching a
+  // real letter where line-breaks are part of writing.
+  entryEl.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      submitBtn.click();
+    }
+  });
+
+  // Auto-grow the textarea up to its max-height ceiling as the person types.
+  entryEl.addEventListener("input", () => {
+    entryEl.style.height = "auto";
+    entryEl.style.height = Math.min(entryEl.scrollHeight, 220) + "px";
   });
 
   document.getElementById("signoutBtn").addEventListener("click", async () => {
@@ -613,12 +741,13 @@
     }
 
     await loadSpine();
+    await loadTodayStream();
+    entryEl.focus();
 
     // Carry over first entry from onboarding, if any.
     const pending = sessionStorage.getItem("magnetism_pending_entry");
     if (pending) {
       sessionStorage.removeItem("magnetism_pending_entry");
-      entryEl.value = pending;
       submitEntry(pending);
     }
   })();
