@@ -220,11 +220,17 @@
   /* ---------- PAST VIEW ---------- */
   .past-view{ display:none; }
   .past-view.visible{ display:block; }
+  /* Pill-shaped "Back to today" so returning to the writing page is
+     immediately visible in past view, not a hidden gold micro-link. */
   .back-btn{
-    background:none; border:none; font-family:var(--font-b); font-size:13px; color: var(--gold);
-    cursor:pointer; padding: 0; margin-bottom: 32px; letter-spacing: 0.02em;
+    background: transparent; border: 0.5px solid var(--border-strong);
+    border-radius: 100px; padding: 9px 20px;
+    font-family: var(--font-b); font-size: 12.5px; font-weight: 500;
+    color: var(--t1); cursor: pointer; margin-bottom: 40px;
+    letter-spacing: 0.03em;
+    transition: background 0.2s, border-color 0.2s;
   }
-  .back-btn:hover{ color: var(--gold-deep); }
+  .back-btn:hover{ background: rgba(36,34,30,0.05); border-color: var(--t1); }
   .past-date{
     font-family: var(--font-d); font-size: 24px; letter-spacing:-0.01em; color: var(--t1); margin-bottom: 8px;
   }
@@ -341,6 +347,7 @@
         <div class="past-entry-text" id="pastEntryText"></div>
         <div class="reply-label">The answer</div>
         <div class="past-reply" id="pastReplyText"></div>
+        <button class="again" id="pastNewEntryBtn">Write a new entry &rarr;</button>
       </section>
 
     </div>
@@ -409,6 +416,15 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
   document.getElementById("backBtn").addEventListener("click", showToday);
+
+  // Bottom-of-past-view affordance. Clears any leftover text in the today
+  // textarea so the writing page opens fresh, not pre-filled with whatever
+  // the person last submitted.
+  document.getElementById("pastNewEntryBtn").addEventListener("click", () => {
+    entryEl.value = "";
+    replyEl.classList.remove("visible");
+    showToday();
+  });
 
   // ---- submit ----
   async function submitEntry(text) {
