@@ -19,7 +19,7 @@
 -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500&family=DM+Serif+Display:ital@0;1&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
@@ -178,16 +178,72 @@
     padding: 4px 20px 32px 0;
     margin-right: -20px; /* room for the scrollbar without shifting text */
   }
-  .stream-block{ display: flex; flex-direction: column; gap: 10px; }
+  .stream-block{ display: flex; flex-direction: column; gap: 12px; }
   .stream-meta{
     font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase;
     color: var(--t3);
   }
   .stream-meta.you{ color: var(--t4); }
-  .stream-meta.answer{ color: var(--gold); }
   .stream-body{
     font-size: 16.5px; line-height: 1.85; color: var(--t1);
     white-space: pre-wrap;
+  }
+
+  /* ---------- MAGNI (the diary voice) ---------- */
+  /* Assistant replies get a distinct treatment: a warm parchment field
+     framed in gold with layered shadows, set in Lora book serif. The
+     effect is Tom Riddle diary energy without being kitsch. On first
+     appearance the field glows and settles, as if the words are being
+     drawn in ink from underneath the page. */
+  .stream-meta.magni{
+    font-family: 'DM Serif Display', Georgia, serif;
+    font-style: italic;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    color: var(--gold-deep);
+  }
+  .stream-block.answer .stream-body{
+    background: radial-gradient(ellipse at 32% 18%, #FDFAF3 0%, #F1E7D2 100%);
+    border: 0.5px solid rgba(169,112,47,0.32);
+    border-radius: 30px 34px 34px 30px / 34px 30px 34px 30px;
+    padding: 32px 40px;
+    box-shadow:
+      0 14px 34px -8px rgba(36,34,30,0.14),
+      0 4px 12px -2px rgba(36,34,30,0.06),
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 -3px 10px -2px rgba(169,112,47,0.10);
+    font-family: 'Lora', Georgia, serif;
+    font-size: 16.5px;
+    line-height: 1.9;
+    color: #3b2d16;
+    position: relative;
+  }
+  .stream-block.answer.just-arrived .stream-body{
+    animation: magni-appear 2.2s var(--ease);
+  }
+  @keyframes magni-appear{
+    0%{
+      opacity: 0;
+      transform: translateY(10px);
+      box-shadow:
+        0 0 60px 6px rgba(169,112,47,0.55),
+        0 0 30px 2px rgba(169,112,47,0.4);
+    }
+    35%{
+      opacity: 1;
+      transform: translateY(0);
+    }
+    100%{
+      box-shadow:
+        0 14px 34px -8px rgba(36,34,30,0.14),
+        0 4px 12px -2px rgba(36,34,30,0.06),
+        inset 0 1px 0 rgba(255,255,255,0.85),
+        inset 0 -3px 10px -2px rgba(169,112,47,0.10);
+    }
+  }
+  @media (max-width: 800px){
+    .stream-block.answer .stream-body{ padding: 26px 28px; }
   }
 
   /* ---------- COMPOSER (fixed bottom textarea) ---------- */
@@ -298,8 +354,34 @@
     font-size: 17px; line-height: 1.85; color: var(--t1); white-space: pre-wrap;
     padding-bottom: 36px; border-bottom: 0.5px solid var(--border);
   }
-  .past-reply{ margin-top:28px; font-size:16.5px; line-height:1.85; color: var(--t1); white-space:pre-wrap; }
-  .past-view .reply-label{ margin-top: 32px; margin-bottom: 16px; }
+  /* Same Magni cartouche in past view — a diary re-opened to an earlier
+     page should feel like the same object as today's page. */
+  .past-reply{
+    background: radial-gradient(ellipse at 32% 18%, #FDFAF3 0%, #F1E7D2 100%);
+    border: 0.5px solid rgba(169,112,47,0.32);
+    border-radius: 30px 34px 34px 30px / 34px 30px 34px 30px;
+    padding: 32px 40px;
+    box-shadow:
+      0 14px 34px -8px rgba(36,34,30,0.14),
+      0 4px 12px -2px rgba(36,34,30,0.06),
+      inset 0 1px 0 rgba(255,255,255,0.85),
+      inset 0 -3px 10px -2px rgba(169,112,47,0.10);
+    font-family: 'Lora', Georgia, serif;
+    font-size: 16.5px; line-height: 1.9; color: #3b2d16;
+    white-space: pre-wrap;
+    margin-top: 4px;
+  }
+  .past-view .reply-label{
+    font-family: 'DM Serif Display', Georgia, serif;
+    font-style: italic;
+    font-size: 17px;
+    letter-spacing: 0.01em;
+    text-transform: none;
+    color: var(--gold-deep);
+    margin-top: 36px;
+    margin-bottom: 14px;
+  }
+  @media (max-width: 800px){ .past-reply{ padding: 26px 28px; } }
 
   footer{ padding:20px 40px; font-size:11.5px; color: var(--t4); text-align:center; border-top:0.5px solid var(--border); }
 
@@ -408,7 +490,7 @@
         <div class="past-date" id="pastDate"></div>
         <div class="past-essence" id="pastEssence"></div>
         <div class="past-entry-text" id="pastEntryText"></div>
-        <div class="reply-label">The answer</div>
+        <div class="reply-label">Magni</div>
         <div class="past-reply" id="pastReplyText"></div>
         <button class="again" id="pastNewEntryBtn">Write a new entry &rarr;</button>
       </section>
@@ -488,11 +570,17 @@
   // end while a reply is being generated.
   function appendToStream(role, content, opts = {}) {
     const block = document.createElement("div");
-    block.className = "stream-block";
+    block.className = role === "user" ? "stream-block you" : "stream-block answer";
+    if (role === "assistant" && opts.animate) {
+      // Fresh reply just arrived from the server: glow in and settle,
+      // Tom Riddle style. Loaded-from-history blocks skip this animation
+      // so mounting the page doesn't set off 20 replies at once.
+      block.classList.add("just-arrived");
+    }
 
     const meta = document.createElement("div");
-    meta.className = role === "user" ? "stream-meta you" : "stream-meta answer";
-    meta.textContent = role === "user" ? "You wrote" : "The answer";
+    meta.className = role === "user" ? "stream-meta you" : "stream-meta magni";
+    meta.textContent = role === "user" ? "You wrote" : "Magni";
 
     const body = document.createElement("div");
     body.className = "stream-body";
@@ -576,7 +664,9 @@
       if (!res.ok) {
         appendToStream("assistant", "Something went wrong. " + (data.error || ""));
       } else {
-        appendToStream("assistant", data.response);
+        // Fresh reply from the server: animate the cartouche in so it
+        // reads as ink surfacing on parchment rather than instant HTML.
+        appendToStream("assistant", data.response, { animate: true });
         // Only unflagged entries make it into the spine; refresh so today's
         // essence shows up in the left column.
         if (!data.flagged) loadSpine();
