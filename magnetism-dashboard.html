@@ -294,6 +294,42 @@
   button.submit:disabled{ opacity: 0.35; cursor: default; transform: none; }
   button.submit:disabled:hover svg{ transform: none; }
 
+  /* ---------- MIC (voice-to-text via Whisper) ---------- */
+  /* Ghost circle button that lives next to the send feather. Two active
+     states: recording (gold fill, pulsing outward ring) and transcribing
+     (soft gold, gentler pulse, click-disabled). Same overall visual
+     language as the flower loader — pulses out, doesn't spin. */
+  .composer-buttons{ display: flex; align-items: center; gap: 12px; }
+  button.mic{
+    width: 46px; height: 46px; border-radius: 50%;
+    padding: 0; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 0.5px solid var(--border-strong);
+    color: var(--ink); cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  }
+  button.mic svg{ width: 18px; height: 18px; }
+  button.mic:hover{ background: rgba(36,34,30,0.05); border-color: var(--t1); }
+  button.mic.recording{
+    background: var(--gold);
+    border-color: var(--gold-deep);
+    color: var(--paper);
+    animation: mic-pulse 1.5s ease-in-out infinite;
+  }
+  button.mic.transcribing{
+    background: var(--gold-soft);
+    border-color: var(--gold);
+    color: var(--gold-deep);
+    cursor: default;
+    animation: mic-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes mic-pulse{
+    0%, 100% { box-shadow: 0 0 0 0 rgba(169,112,47,0.5); }
+    50%      { box-shadow: 0 0 0 10px rgba(169,112,47,0); }
+  }
+  button.mic:disabled:not(.recording):not(.transcribing){
+    opacity: 0.4; cursor: default;
+  }
+
   /* ---------- WAITING (flower loader) ---------- */
   /* Sits in-stream as the last item while a reply is being generated. */
   .waiting{
@@ -467,19 +503,33 @@
         <div class="composer">
           <textarea id="entry" placeholder="Write exactly what you'd never say out loud. No one else opens this page."></textarea>
           <div class="composer-actions">
-            <span class="word-hint">One complete entry. Send it when you're done.</span>
-            <button class="submit" id="submitBtn" aria-label="Send entry" title="Send entry">
-              <!-- Lucide feather glyph. Reads unambiguously as a real feather:
-                   soft curved vane, central rib line, and the extended shaft
-                   ending in a nib bottom-left. Same shape used in the cursor. -->
-              <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
-                   fill="none" stroke="#F4EFE5" stroke-width="1.7"
-                   stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/>
-                <path d="M16 8 2 22"/>
-                <path d="M17.5 15H9"/>
-              </svg>
-            </button>
+            <span class="word-hint" id="wordHint">One complete entry. Send it when you're done.</span>
+            <div class="composer-buttons">
+              <!-- Voice-to-text via Whisper. Click to start recording, click
+                   again to stop; transcript populates the textarea for review
+                   before send. Audio is never stored. -->
+              <button class="mic" id="micBtn" aria-label="Speak your entry" title="Speak your entry">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+                     fill="none" stroke="currentColor" stroke-width="1.8"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3"/>
+                  <path d="M5 10v2a7 7 0 0 0 14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+              </button>
+              <button class="submit" id="submitBtn" aria-label="Send entry" title="Send entry">
+                <!-- Lucide feather glyph. Reads unambiguously as a real feather:
+                     soft curved vane, central rib line, and the extended shaft
+                     ending in a nib bottom-left. Same shape used in the cursor. -->
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+                     fill="none" stroke="#F4EFE5" stroke-width="1.7"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5l6.74-6.76z"/>
+                  <path d="M16 8 2 22"/>
+                  <path d="M17.5 15H9"/>
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -701,6 +751,154 @@
   entryEl.addEventListener("input", () => {
     entryEl.style.height = "auto";
     entryEl.style.height = Math.min(entryEl.scrollHeight, 220) + "px";
+  });
+
+  // ---- voice-to-text ----
+  // MediaRecorder captures a webm/opus (or mp4/aac on Safari) blob, we ship
+  // it to magnetism-transcribe which forwards to Whisper and returns text.
+  // The transcript is APPENDED to whatever is already in the textarea, so
+  // typing and speaking can be mixed on the same entry without loss.
+  const micBtn = document.getElementById("micBtn");
+  const wordHintEl = document.getElementById("wordHint");
+  const wordHintDefault = wordHintEl.textContent;
+
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let recordedChunks = [];
+  let recordingMimeType = "audio/webm";
+
+  function pickMimeType() {
+    // Chrome/Firefox default; Safari prefers mp4/aac.
+    const candidates = [
+      "audio/webm;codecs=opus",
+      "audio/webm",
+      "audio/mp4",
+      "audio/ogg;codecs=opus",
+    ];
+    for (const t of candidates) {
+      if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) {
+        return t;
+      }
+    }
+    return "";
+  }
+
+  function setMicState(state) {
+    micBtn.classList.remove("recording", "transcribing");
+    if (state === "recording") {
+      micBtn.classList.add("recording");
+      micBtn.setAttribute("aria-label", "Stop recording");
+      micBtn.title = "Stop recording";
+      wordHintEl.textContent = "Listening. Click again when you're done speaking.";
+    } else if (state === "transcribing") {
+      micBtn.classList.add("transcribing");
+      micBtn.setAttribute("aria-label", "Transcribing");
+      micBtn.title = "Transcribing";
+      wordHintEl.textContent = "Reading what you said.";
+    } else {
+      micBtn.setAttribute("aria-label", "Speak your entry");
+      micBtn.title = "Speak your entry";
+      wordHintEl.textContent = wordHintDefault;
+    }
+  }
+
+  async function startRecording() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      wordHintEl.textContent = "Voice input isn't supported in this browser.";
+      return;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      wordHintEl.textContent = "Microphone access denied. You can still write.";
+      return;
+    }
+
+    recordingMimeType = pickMimeType();
+    const opts = recordingMimeType ? { mimeType: recordingMimeType } : {};
+    try {
+      mediaRecorder = new MediaRecorder(mediaStream, opts);
+    } catch (_e) {
+      mediaRecorder = new MediaRecorder(mediaStream);
+    }
+
+    recordedChunks = [];
+    mediaRecorder.addEventListener("dataavailable", (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    });
+    mediaRecorder.addEventListener("stop", handleRecordingStop);
+
+    mediaRecorder.start();
+    setMicState("recording");
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+      mediaRecorder.stop();
+    }
+  }
+
+  async function handleRecordingStop() {
+    // Release the mic so the browser tab indicator turns off immediately.
+    if (mediaStream) {
+      mediaStream.getTracks().forEach((t) => t.stop());
+      mediaStream = null;
+    }
+
+    if (recordedChunks.length === 0) {
+      setMicState("idle");
+      return;
+    }
+
+    setMicState("transcribing");
+
+    const blob = new Blob(recordedChunks, { type: recordingMimeType || "audio/webm" });
+    const extension = (recordingMimeType.includes("mp4") ? "mp4"
+                      : recordingMimeType.includes("ogg") ? "ogg"
+                      : "webm");
+
+    const form = new FormData();
+    form.append("audio", blob, `recording.${extension}`);
+
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/magnetism-transcribe`, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${session.access_token}` },
+        body: form,
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        wordHintEl.textContent = "Transcription failed. " + (data.error || "");
+        setMicState("idle");
+        setTimeout(() => { wordHintEl.textContent = wordHintDefault; }, 3500);
+        return;
+      }
+
+      const text = (data.text || "").trim();
+      if (text) {
+        const existing = entryEl.value.trim();
+        entryEl.value = existing ? existing + "\n\n" + text : text;
+        entryEl.dispatchEvent(new Event("input")); // trigger auto-grow
+        entryEl.focus();
+        // Move caret to end so continuing to type appends.
+        entryEl.setSelectionRange(entryEl.value.length, entryEl.value.length);
+      }
+      setMicState("idle");
+    } catch (err) {
+      wordHintEl.textContent = "Couldn't reach transcription. Try again.";
+      setMicState("idle");
+      setTimeout(() => { wordHintEl.textContent = wordHintDefault; }, 3500);
+    }
+  }
+
+  micBtn.addEventListener("click", () => {
+    if (micBtn.classList.contains("transcribing")) return; // busy
+    if (micBtn.classList.contains("recording")) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
   });
 
   document.getElementById("signoutBtn").addEventListener("click", async () => {
