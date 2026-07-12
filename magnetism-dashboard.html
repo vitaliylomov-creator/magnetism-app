@@ -687,6 +687,23 @@
   }
 
   // ---- submit ----
+  // Rolls back the optimistic user block from the stream so the submit
+  // feels like it "didn't happen" from the person's point of view. Used
+  // for retriable errors (503 fail-closed on the safety classifier)
+  // where we want the entry text back in the textarea so they can just
+  // hit send again.
+  function rollbackLastUserBlock() {
+    const blocks = streamEl.querySelectorAll(".stream-block.you");
+    const last = blocks[blocks.length - 1];
+    if (last) last.remove();
+    updatePromptVisibility();
+  }
+
+  function showRetryHint(seconds = 4) {
+    wordHintEl.textContent = "Something is not reading right on our side. Please send this again in a moment.";
+    setTimeout(() => { wordHintEl.textContent = wordHintDefault; }, seconds * 1000);
+  }
+
   async function submitEntry(text) {
     // Optimistically render the person's own entry into the stream so the
     // page reflects their input immediately; then start the waiting flower.
@@ -712,7 +729,19 @@
       waitingEl.classList.remove("visible");
 
       if (!res.ok) {
-        appendToStream("assistant", "Something went wrong. " + (data.error || ""));
+        // Fail-closed on the safety classifier: roll back the optimistic
+        // user bubble, put the entry text back into the textarea, show
+        // a retry hint. The person just clicks send again. See the
+        // magnetism-chat header comment for why this is a submit-twice
+        // friction on purpose.
+        if (res.status === 503 && data.error === "classifier_unavailable") {
+          rollbackLastUserBlock();
+          entryEl.value = text;
+          entryEl.dispatchEvent(new Event("input"));
+          showRetryHint();
+        } else {
+          appendToStream("assistant", "Something went wrong. " + (data.error || ""));
+        }
       } else {
         // Fresh reply from the server: animate the cartouche in so it
         // reads as ink surfacing on parchment rather than instant HTML.

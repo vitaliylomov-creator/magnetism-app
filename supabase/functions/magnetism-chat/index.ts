@@ -41,14 +41,14 @@
 //   401 { error }  — missing/invalid JWT
 //   500 { error }  — Anthropic / DB error
 //
-// Sprint 2 hardening notes for later (Technical Brief §7):
-//   - Live consultants run edge-case validation before public launch. Any
-//     false positive on ordinary stress content, or false negative on
-//     borderline crisis phrasing, blocks launch until tuned.
-//   - Classifier failure currently fails-open to the normal flow with an
-//     incident row noting "classifier_error". For real launch this should
-//     be revisited: possibly fail-closed with a soft "try again" error, so
-//     an intermittent Haiku hiccup can never let a real crisis through.
+// Sprint 2 hardening notes:
+//   - Live consultants run edge-case validation before public launch (Sprint
+//     7). Any false positive on ordinary stress content, or false negative
+//     on borderline crisis phrasing, blocks launch until tuned.
+//   - Classifier failure fails CLOSED (503, "please send again"). Fail-open
+//     was the founder-only default; flipped for the invite beta because
+//     silence during a real crisis is Project Definition §7's one hard
+//     failure mode and worth a small submit-twice friction to prevent.
 // ────────────────────────────────────────────────────────────────────────────
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -244,16 +244,24 @@ Deno.serve(async (req: Request) => {
     }
 
     if (gate.error) {
-      // Fail-open path. Log an incident row so ops can measure how often
-      // the classifier fails; do not tell the user, since we are proceeding
-      // to a normal reply. Message excerpt is truncated here because this
-      // is not a real crisis event, it is a classifier-flake audit trail.
+      // Fail-CLOSED. If we cannot verify safety, we do not proceed to Sonnet.
+      // Log the incident so ops can watch classifier reliability, then return
+      // a soft 503 asking the person to try again in a moment. This protects
+      // against the one hard failure mode called out in Project Definition §7:
+      // a real crisis message slipping through silently while Haiku was
+      // flaking. The frontend restores the entry text into the textarea and
+      // shows a retry hint so the second submit feels like a natural repeat,
+      // not a lost message.
       await admin.from("safety_incidents").insert({
         user_id: user.id,
         anonymized_context: message.slice(0, 200),
         resource_shown: "classifier_error",
       });
-      console.warn("[magnetism-chat] classifier error, falling open:", gate.error);
+      console.warn("[magnetism-chat] classifier error, failing closed:", gate.error);
+      return json({
+        error: "classifier_unavailable",
+        message: "Something is not reading right on our side. Please send this again in a moment.",
+      }, 503);
     }
 
     // ─── SAFE PATH: normal reply + essence ──────────────────────────────
