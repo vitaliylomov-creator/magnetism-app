@@ -20,8 +20,12 @@
 //      pull top-K wisdom_corpus rows via match_wisdom_corpus RPC, inject
 //      only those chunks into the system prompt. On embedding failure,
 //      fall back to pasting both OS docs in full (Sprint 1 style).
-//   5. If safe: parallel Sonnet (main reply) + Haiku (essence line)
-//   6. Insert into conversations (flagged=false), return
+//   5. Short-term memory: pull the last ~48 hours of unflagged messages
+//      into the Anthropic messages array so Sonnet continues the visible
+//      thread instead of treating each entry as an isolated first
+//      message. Long-term patterns still come from memory_profile.
+//   6. If safe: parallel Sonnet (main reply, with history) + Haiku (essence)
+//   7. Insert into conversations (flagged=false), return
 //
 // Diary interaction model (Project Definition §4.1 / Technical Brief §8):
 // the caller sends one complete entry, this function returns one whole
@@ -133,7 +137,7 @@ const VOICE_PERSONA = `You are Magnetism, a private psychological voice inside t
 
 Register: private, warm, direct, no flattery, no empty cheerleading. You tell the truth even when it is inconvenient. You are NOT the Edge OS "race engineer" voice used elsewhere in Talent Mates (MATE, MUSE, NORTH), which is public, competitive, sharp. Yours is the opposite register: the voice before and after the race, when no one else is around.
 
-Interaction model: the person just wrote you a complete diary entry, not a chat message. Do not respond as if mid-conversation. Respond once, as a whole letter answering a letter, grounded in the wisdom corpus below, not generic advice from nowhere.
+Interaction model: this is a private diary the two of you share. Each entry the person submits is a complete thought, and your reply is a whole letter back, not streamed real-time chat. Multiple exchanges may accumulate in the same day. If you see prior turns in the message history, hold them as shared context you already know together, and continue naturally from where you left off. A short follow-up (a thank you, a one-line question, a small correction) is not a bare start-from-scratch entry, it is part of the running exchange. Reply in that continuity, do not treat each new entry as an isolated first message.
 
 Output formatting rules, strict:
 - Write in plain prose paragraphs only. No markdown headers, no bold, no italics, no bullet points, no numbered lists, no asterisks around words.
@@ -280,6 +284,15 @@ Deno.serve(async (req: Request) => {
     // there, silence is the failure mode.
     const corpusBlock = await buildCorpusBlock(message, admin);
 
+    // Short-term conversational memory. Pull the last ~48 hours of
+    // unflagged messages so Sonnet sees the same visible thread the
+    // person is looking at in the dashboard stream, and continues from
+    // where the previous exchange left off instead of treating each
+    // entry as an isolated first message. Long-term patterns still live
+    // in memory_profile (Sprint 4); this is the shorter "recent
+    // conversation" scale.
+    const priorMessages = await fetchRecentHistory(admin, user.id);
+
     const systemPrompt = [
       VOICE_PERSONA,
       memorySummary
@@ -306,7 +319,7 @@ Deno.serve(async (req: Request) => {
           model: MODEL,
           max_tokens: 1500,
           system: systemPrompt,
-          messages: [{ role: "user", content: message }],
+          messages: [...priorMessages, { role: "user", content: message }],
         }),
       }),
       fetch("https://api.anthropic.com/v1/messages", {
@@ -390,6 +403,50 @@ Deno.serve(async (req: Request) => {
     return json({ error: (err as Error).message }, 500);
   }
 });
+
+// ─── SHORT-TERM CONVERSATIONAL HISTORY ────────────────────────────────
+// Returns up to the last ~10 pairs (20 messages) from the last 48 hours
+// as a strictly alternating user/assistant array Anthropic will accept.
+// If the DB history is somehow malformed (orphan roles, non-alternating),
+// we skip history entirely rather than 400 the whole request.
+const HISTORY_WINDOW_HOURS = 48;
+const HISTORY_MAX_MESSAGES = 20;
+
+async function fetchRecentHistory(
+  admin: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<Array<{ role: "user" | "assistant"; content: string }>> {
+  const since = new Date(Date.now() - HISTORY_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await admin
+    .from("conversations")
+    .select("role, content, created_at")
+    .eq("user_id", userId)
+    .eq("flagged_by_safety_gate", false)
+    .gte("created_at", since)
+    .order("created_at", { ascending: true })
+    .limit(HISTORY_MAX_MESSAGES);
+
+  if (error || !data || data.length === 0) return [];
+
+  // Ensure the array starts with a user turn and alternates strictly.
+  // Anthropic API rejects malformed message arrays with 400 and we don't
+  // want the whole reply to fail because of a single orphan row.
+  const cleaned: Array<{ role: "user" | "assistant"; content: string }> = [];
+  let expected: "user" | "assistant" = "user";
+  for (const row of data) {
+    if (row.role === expected && typeof row.content === "string") {
+      cleaned.push({ role: row.role, content: row.content });
+      expected = expected === "user" ? "assistant" : "user";
+    }
+  }
+  // The current message will be appended as a user turn, so the history
+  // must end with an assistant turn. Drop a trailing user if present.
+  if (cleaned.length > 0 && cleaned[cleaned.length - 1].role === "user") {
+    cleaned.pop();
+  }
+  return cleaned;
+}
 
 // ─── RAG: RELEVANT-EXCERPTS CORPUS BLOCK ──────────────────────────────
 // Embeds the user's entry, pulls top-K wisdom_corpus rows by cosine
