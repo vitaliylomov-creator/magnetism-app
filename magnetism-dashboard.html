@@ -330,6 +330,22 @@
     opacity: 0.4; cursor: default;
   }
 
+  /* ---------- WITNESS SEND ("Just be heard") ---------- */
+  /* Secondary send button, ghost style with an ear icon. One click sends
+     the entry in witness mode (mode: "witness"), where Magni returns only
+     a brief acknowledgment of presence. Visually secondary to the feather
+     so the default action stays clearly primary. */
+  button.witness{
+    width: 46px; height: 46px; border-radius: 50%;
+    padding: 0; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 0.5px solid var(--border-strong);
+    color: var(--ink); cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  }
+  button.witness svg{ width: 20px; height: 20px; }
+  button.witness:hover{ background: var(--gold-soft); border-color: var(--gold); color: var(--gold-deep); transform: translateY(-1px); }
+  button.witness:disabled{ opacity: 0.4; cursor: default; transform: none; }
+
   /* ---------- WAITING (flower loader) ---------- */
   /* Sits in-stream as the last item while a reply is being generated. */
   .waiting{
@@ -517,7 +533,19 @@
                   <line x1="12" y1="19" x2="12" y2="22"/>
                 </svg>
               </button>
-              <button class="submit" id="submitBtn" aria-label="Send entry" title="Send entry">
+              <!-- Witness mode. Explicit UI toggle per SKILL v2.0 §2: this
+                   must be a click, never a text command. One click sends
+                   the entry in "just listen" mode where Magni returns
+                   only a brief acknowledgment of presence, no analysis. -->
+              <button class="witness" id="witnessBtn" aria-label="Send in witness mode (just listen)" title="Send. Just be heard.">
+                <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"
+                     fill="none" stroke="currentColor" stroke-width="1.6"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/>
+                  <path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/>
+                </svg>
+              </button>
+              <button class="submit" id="submitBtn" aria-label="Send entry" title="Send. Magni will respond.">
                 <!-- Lucide feather glyph. Reads unambiguously as a real feather:
                      soft curved vane, central rib line, and the extended shaft
                      ending in a nib bottom-left. Same shape used in the cursor. -->
@@ -704,7 +732,10 @@
     setTimeout(() => { wordHintEl.textContent = wordHintDefault; }, seconds * 1000);
   }
 
-  async function submitEntry(text) {
+  // mode is always "mentor" or "witness" and comes from the button clicked,
+  // never from message content. Per SKILL v2.0 §2 the whole point of the
+  // witness toggle is to be an explicit user click, not an interpretation.
+  async function submitEntry(text, mode = "mentor") {
     // Optimistically render the person's own entry into the stream so the
     // page reflects their input immediately; then start the waiting flower.
     appendToStream("user", text);
@@ -712,6 +743,7 @@
     entryEl.style.height = "";
     entryEl.disabled = true;
     submitBtn.disabled = true;
+    witnessBtn.disabled = true;
     waitingEl.classList.add("visible");
     scrollStreamToBottom();
 
@@ -722,7 +754,7 @@
           "Content-Type": "application/json",
           "Authorization": `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, mode }),
       });
 
       const data = await res.json();
@@ -746,29 +778,41 @@
         // Fresh reply from the server: animate the cartouche in so it
         // reads as ink surfacing on parchment rather than instant HTML.
         appendToStream("assistant", data.response, { animate: true });
-        // Only unflagged entries make it into the spine; refresh so today's
-        // essence shows up in the left column.
-        if (!data.flagged) loadSpine();
+        // Only unflagged mentor entries make it into the spine (witness
+        // entries have no essence by design, and the spine would show
+        // raw first-60-chars, which is exactly the analysis the person
+        // opted out of). Skip spine refresh for witness too.
+        if (!data.flagged && data.mode !== "witness") loadSpine();
       }
     } catch (err) {
       waitingEl.classList.remove("visible");
       appendToStream("assistant", "Couldn't reach Magnetism right now. Try again in a moment.");
     } finally {
       submitBtn.disabled = false;
+      witnessBtn.disabled = false;
       entryEl.disabled = false;
       entryEl.focus();
     }
   }
 
+  const witnessBtn = document.getElementById("witnessBtn");
+
   submitBtn.addEventListener("click", () => {
     const text = entryEl.value.trim();
     if (!text) return;
-    submitEntry(text);
+    submitEntry(text, "mentor");
+  });
+
+  witnessBtn.addEventListener("click", () => {
+    const text = entryEl.value.trim();
+    if (!text) return;
+    submitEntry(text, "witness");
   });
 
   // Cmd/Ctrl+Enter as an optional keyboard shortcut for people who prefer
   // hands-on-keyboard. Plain Enter still inserts a newline, matching a
-  // real letter where line-breaks are part of writing.
+  // real letter where line-breaks are part of writing. Keyboard shortcut
+  // always sends in mentor mode (default); witness requires the click.
   entryEl.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();

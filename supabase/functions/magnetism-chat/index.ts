@@ -291,6 +291,47 @@ Stance: agency-first, always. Your reply exists so the person can see their own 
 
 This is a private diary the two of you share. Each entry the person submits is a complete thought and your reply is a whole letter back, not streamed real-time chat. Multiple exchanges may accumulate in the same day. You may see prior turns from earlier in the day in the message history. If so, hold them as shared context you already know together, and continue naturally from where you left off. A short follow-up (a thank you, a one-line question, a small correction) is not a bare start-from-scratch entry, it is part of the running exchange.`;
 
+// Witness mode persona. Per MAGNETISM_Mentor_Voice_SKILL.md v2.0 §2 and §3.
+// Activated ONLY when the caller passes mode: "witness" in the request body,
+// which the frontend does only when the person explicitly clicks the
+// "just listen" send button. Never inferred from message content, per the
+// SKILL: "хибний здогад у будь-який бік шкодить довірі більше, ніж явний
+// перемикач коштує в UX."
+const WITNESS_PERSONA = `You are Magnetism in Witness mode.
+
+The person just wrote a diary entry and explicitly chose "just listen" via a UI control, not via a text command. That click is their explicit request for silence-of-analysis. Respect it absolutely.
+
+Your response is ONE OR TWO SHORT SENTENCES. Nothing more. Acknowledge that you are present with them. That is all.
+
+Forbidden in this mode, without exception:
+- Mirroring their words back to them
+- Naming any pattern
+- Any reframe
+- Any question, even open-ended, even soft
+- Any "what if", "interesting that", "I notice"
+- Any observation about their language, tone, or state
+- Any suggestion, even implicit
+- Any encouragement ("you've got this", "you're strong", "you can do it")
+
+What is allowed, and only this:
+- Simple confirmations of presence ("I'm here", "I hear you", "Я тут", "Чую тебе")
+- Simple thanks for sharing ("Thank you for telling me", "Дякую, що розповів")
+- Simple non-analytical acknowledgment that it was heavy ("That was heavy", "Це було непросто"), without adding any analysis
+
+Language: same language the writer used.
+
+Formatting: no em-dashes, no en-dashes, no ellipses, no markdown, no emoji.
+
+Examples:
+- Entry: "Довгий день, не хочу це обговорювати, просто виписав."
+  Reply: "Я тут. Слухаю."
+- Entry: "Сьогодні зробив вчинок, про який не хочу говорити."
+  Reply: "Чую тебе. Дякую, що розповів."
+- Entry: "I don't want to unpack this today, I just needed to say it out loud."
+  Reply: "I hear you. Thank you for putting it here."
+
+Do not exceed two sentences. Do not embellish. The value of this mode is the restraint itself.`;
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -323,6 +364,11 @@ Deno.serve(async (req: Request) => {
     if (!message) {
       return json({ error: "message is required" }, 400);
     }
+    // Mode comes from the caller's explicit UI click, never from message
+    // content. Default is "mentor" for backward compatibility. Anything
+    // other than "witness" is coerced to "mentor" so a bad value never
+    // silently mutes the reply.
+    const mode: "mentor" | "witness" = body?.mode === "witness" ? "witness" : "mentor";
 
     // Service-role client for cross-table reads not covered by the caller's
     // own RLS-visible rows (users/memory_profiles are still user-scoped by
@@ -407,59 +453,23 @@ Deno.serve(async (req: Request) => {
       }, 503);
     }
 
-    // ─── SAFE PATH: normal reply + essence ──────────────────────────────
+    // ─── SAFE PATH ──────────────────────────────────────────────────────
+    // Two branches. Mentor mode is the full mentor pipeline (profile,
+    // memory, RAG corpus, parallel essence, Sonnet with full VOICE_PERSONA).
+    // Witness mode is a much smaller pipeline: no analysis, no essence, no
+    // RAG, no memory profile. Just presence, per SKILL v2.0 §3. Both
+    // branches share the safety+scope gate, the history fetch (so a
+    // witness reply still knows there was a previous exchange), and the
+    // conversations insert.
 
-    const { data: profileRow } = await admin
-      .from("users")
-      .select("domain")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    const { data: memoryRow } = await admin
-      .from("memory_profiles")
-      .select("summary")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    const domain = profileRow?.domain ?? "none";
-    const memorySummary = memoryRow?.summary?.trim();
-
-    const domainOverlay = domainOverlayFor(domain);
-
-    // Sprint 3 RAG: embed the entry, pull top-K wisdom_corpus chunks by
-    // cosine similarity, inject only those chunks into the system prompt.
-    // If the OpenAI embedding call fails or returns no matches, fall back
-    // to pasting both OS docs in full (Sprint 1 behavior). Fail-open here
-    // is acceptable because a broader-context reply is still coherent,
-    // just more expensive. Fail-closed for the safety gate is different:
-    // there, silence is the failure mode.
-    const corpusBlock = await buildCorpusBlock(message, admin);
-
-    // Short-term conversational memory. Pull the last ~48 hours of
-    // unflagged messages so Sonnet sees the same visible thread the
-    // person is looking at in the dashboard stream, and continues from
-    // where the previous exchange left off instead of treating each
-    // entry as an isolated first message. Long-term patterns still live
-    // in memory_profile (Sprint 4); this is the shorter "recent
-    // conversation" scale.
     const priorMessages = await fetchRecentHistory(admin, user.id);
 
-    const systemPrompt = [
-      VOICE_PERSONA,
-      memorySummary
-        ? `\nWhat you remember about this person from past entries:\n${memorySummary}`
-        : `\nYou have no prior memory of this person yet. This may be their first entry.`,
-      domainOverlay,
-      `\n---\n${corpusBlock}`,
-    ].join("\n");
+    let responseText = "";
+    let essence = "";
 
-    // Fire both Claude calls in parallel: Sonnet for the main reply, Haiku
-    // for the essence line that titles this entry in the left spine. Running
-    // in parallel means the total latency is just the slower of the two
-    // (Sonnet), not the sum. Failure of the essence call is tolerable, we
-    // still return the reply; failure of the reply call fails the request.
-    const [claudeRes, essenceRes] = await Promise.all([
-      fetch("https://api.anthropic.com/v1/messages", {
+    if (mode === "witness") {
+      // Witness pipeline: single short Sonnet call. No corpus, no essence.
+      const witnessRes = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -468,59 +478,114 @@ Deno.serve(async (req: Request) => {
         },
         body: JSON.stringify({
           model: MODEL,
-          max_tokens: 1500,
-          system: systemPrompt,
+          max_tokens: 120,
+          system: WITNESS_PERSONA,
           messages: [...priorMessages, { role: "user", content: message }],
         }),
-      }),
-      fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-api-key": ANTHROPIC_KEY,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: ESSENCE_MODEL,
-          max_tokens: 60,
-          system: ESSENCE_INSTRUCTION,
-          messages: [{ role: "user", content: message }],
-        }),
-      }),
-    ]);
+      });
 
-    if (!claudeRes.ok) {
-      const errText = await claudeRes.text();
-      console.error("[magnetism-chat] Anthropic error:", claudeRes.status, errText);
-      return json({ error: "Failed to reach Claude" }, 500);
-    }
+      if (!witnessRes.ok) {
+        const errText = await witnessRes.text();
+        console.error("[magnetism-chat] Anthropic witness error:", witnessRes.status, errText);
+        return json({ error: "Failed to reach Claude" }, 500);
+      }
 
-    const claudeData = await claudeRes.json();
-    const rawResponse = (claudeData.content ?? [])
-      .filter((block: { type: string }) => block.type === "text")
-      .map((block: { text: string }) => block.text)
-      .join("\n")
-      .trim();
-
-    // Belt-and-suspenders sanitization. The system prompt already forbids
-    // em-dashes, ellipses, markdown, and emoji, but the model has centuries
-    // of prose training that leaks the occasional em-dash. Strip them here
-    // so the person never sees one, regardless of what the model returned.
-    const responseText = sanitizeReply(rawResponse);
-
-    // Essence is best-effort. If Haiku failed or returned junk, the entry
-    // still saves without one and the spine will fall back to date-only.
-    let essence = "";
-    if (essenceRes.ok) {
-      const essenceData = await essenceRes.json();
-      const rawEssence = (essenceData.content ?? [])
+      const witnessData = await witnessRes.json();
+      const rawWitness = (witnessData.content ?? [])
         .filter((block: { type: string }) => block.type === "text")
         .map((block: { text: string }) => block.text)
-        .join(" ")
+        .join("\n")
         .trim();
-      essence = sanitizeEssence(rawEssence);
+      responseText = sanitizeReply(rawWitness);
+      // Essence intentionally left empty. Witness entries do not get a
+      // distilled title, since distillation is a form of naming a pattern
+      // and SKILL v2.0 §3 forbids that in this mode. Spine will fall
+      // back to the first N chars of the entry.
     } else {
-      console.warn("[magnetism-chat] essence call failed:", essenceRes.status);
+      // Mentor pipeline: profile + memory + domain overlay + RAG corpus +
+      // parallel Sonnet (main reply) and Haiku (essence).
+      const { data: profileRow } = await admin
+        .from("users")
+        .select("domain")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      const { data: memoryRow } = await admin
+        .from("memory_profiles")
+        .select("summary")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      const domain = profileRow?.domain ?? "none";
+      const memorySummary = memoryRow?.summary?.trim();
+      const domainOverlay = domainOverlayFor(domain);
+      const corpusBlock = await buildCorpusBlock(message, admin);
+
+      const systemPrompt = [
+        VOICE_PERSONA,
+        memorySummary
+          ? `\nWhat you remember about this person from past entries:\n${memorySummary}`
+          : `\nYou have no prior memory of this person yet. This may be their first entry.`,
+        domainOverlay,
+        `\n---\n${corpusBlock}`,
+      ].join("\n");
+
+      const [claudeRes, essenceRes] = await Promise.all([
+        fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: MODEL,
+            max_tokens: 1500,
+            system: systemPrompt,
+            messages: [...priorMessages, { role: "user", content: message }],
+          }),
+        }),
+        fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: ESSENCE_MODEL,
+            max_tokens: 60,
+            system: ESSENCE_INSTRUCTION,
+            messages: [{ role: "user", content: message }],
+          }),
+        }),
+      ]);
+
+      if (!claudeRes.ok) {
+        const errText = await claudeRes.text();
+        console.error("[magnetism-chat] Anthropic error:", claudeRes.status, errText);
+        return json({ error: "Failed to reach Claude" }, 500);
+      }
+
+      const claudeData = await claudeRes.json();
+      const rawResponse = (claudeData.content ?? [])
+        .filter((block: { type: string }) => block.type === "text")
+        .map((block: { text: string }) => block.text)
+        .join("\n")
+        .trim();
+      responseText = sanitizeReply(rawResponse);
+
+      if (essenceRes.ok) {
+        const essenceData = await essenceRes.json();
+        const rawEssence = (essenceData.content ?? [])
+          .filter((block: { type: string }) => block.type === "text")
+          .map((block: { text: string }) => block.text)
+          .join(" ")
+          .trim();
+        essence = sanitizeEssence(rawEssence);
+      } else {
+        console.warn("[magnetism-chat] essence call failed:", essenceRes.status);
+      }
     }
 
     const sessionId = crypto.randomUUID();
@@ -548,7 +613,7 @@ Deno.serve(async (req: Request) => {
       // Don't fail the request over a logging write, the person still gets their reply.
     }
 
-    return json({ response: responseText, essence, flagged: false }, 200);
+    return json({ response: responseText, essence, flagged: false, mode }, 200);
   } catch (err) {
     console.error("[magnetism-chat] unexpected error:", err);
     return json({ error: (err as Error).message }, 500);
